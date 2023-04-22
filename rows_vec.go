@@ -12,12 +12,18 @@ import (
 
 type VecScanner interface {
 	U8Vec(colIdx int) ([]uint8, error)
+	I8Vec(colIdx int) ([]int8, error)
+	I16Vec(colIdx int) ([]int16, error)
+	U16Vec(colIdx int) ([]uint16, error)
 	U32Vec(colIdx int) ([]uint32, error)
+	U64Vec(colIdx int) ([]uint64, error)
 	U64ListVec(colIdx int, buf [][]uint64) ([][]uint64, error)
 	I64Vec(colIdx int) ([]int64, error)
+	I32Vec(colIdx int) ([]int32, error)
 	U32ListVec(colIdx int, buf [][]uint32) ([][]uint32, error)
 	I32ListVec(colIdx int, buf [][]int32) ([][]int32, error)
 	I64ListVec(colIdx int, buf [][]int64) ([][]int64, error)
+	BigIntVec(colIdx int, buf []int64) ([]int64, error)
 	F32Vec(colIdx int) ([]float32, error)
 	F64Vec(colIdx int) ([]float64, error)
 	F32ListVec(colIdx int, buf [][]float32) ([][]float32, error)
@@ -49,6 +55,32 @@ func (r *rows) NumValues() int {
 	return int(r.chunkRowCount)
 }
 
+func (r *rows) BigIntVec(colIdx int, vec []int64) ([]int64, error) {
+	vector := C.duckdb_data_chunk_get_vector(r.chunk, C.idx_t(colIdx))
+	vec = vec[:0]
+	for i := 0; i < int(r.chunkRowCount); i++ {
+		hi := get[C.duckdb_hugeint](vector, C.idx_t(i))
+		vec = append(vec, hugeIntToNative(hi).Int64())
+	}
+	return vec, nil
+}
+
+func (r *rows) U16Vec(colIdx int) ([]uint16, error) {
+	return getGen[uint16](C.DUCKDB_TYPE_USMALLINT, r, colIdx)
+}
+
+func (r *rows) I8Vec(colIdx int) ([]int8, error) {
+	return getGen[int8](C.DUCKDB_TYPE_TINYINT, r, colIdx)
+}
+
+func (r *rows) I16Vec(colIdx int) ([]int16, error) {
+	return getGen[int16](C.DUCKDB_TYPE_SMALLINT, r, colIdx)
+}
+
+func (r *rows) U64Vec(colIdx int) ([]uint64, error) {
+	return getGen[uint64](C.DUCKDB_TYPE_UBIGINT, r, colIdx)
+}
+
 func (r *rows) U32Vec(colIdx int) ([]uint32, error) {
 	return getGen[uint32](C.DUCKDB_TYPE_UINTEGER, r, colIdx)
 }
@@ -67,6 +99,10 @@ func (r *rows) F64ListVec(colId int, buf [][]float64) ([][]float64, error) {
 
 func (r *rows) F32ListVec(colId int, buf [][]float32) ([][]float32, error) {
 	return listVec[float32](r, colId, C.DUCKDB_TYPE_FLOAT, buf)
+}
+
+func (r *rows) I32Vec(colIdx int) ([]int32, error) {
+	return getGen[int32](C.DUCKDB_TYPE_INTEGER, r, colIdx)
 }
 
 func (r *rows) I32ListVec(colId int, buf [][]int32) ([][]int32, error) {
