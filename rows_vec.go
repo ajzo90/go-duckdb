@@ -5,7 +5,9 @@ package duckdb
 */
 import "C"
 import (
+	"fmt"
 	"io"
+	"math/bits"
 	"time"
 	"unsafe"
 )
@@ -32,11 +34,14 @@ type VecScanner interface {
 	StrListVec(colIdx int, buf [][][]byte) ([][][]byte, error)
 	BoolVec(colIdx int) ([]bool, error)
 	BoolListVec(colIdx int, buf [][]bool) ([][]bool, error)
-	TsVec(colIdx int, buf []time.Time) ([]time.Time, error)
+	TimeVec(colIdx int, buf []time.Time) ([]time.Time, error)
+	TimestampVec(colIdx int, buf []time.Time) ([]time.Time, error)
 	DateVec(colIdx int, buf []time.Time) ([]time.Time, error)
 	LoadVec() error
 	NumValues() int
 }
+
+var _ VecScanner = &rows{}
 
 func (r *rows) LoadVec() error {
 	C.duckdb_destroy_data_chunk(&r.chunk)
@@ -137,18 +142,45 @@ func (r *rows) F64Vec(colIdx int) ([]float64, error) {
 	return getGen[float64](C.DUCKDB_TYPE_DOUBLE, r, colIdx)
 }
 
+func Blocks(n int) int {
+	return (n-1)/64 + 1
+}
+
 func (r *rows) StringVec(colIdx int, buf [][]byte) ([][]byte, error) {
+	var ln = int(r.chunkRowCount)
 	vector := C.duckdb_data_chunk_get_vector(r.chunk, C.idx_t(colIdx))
-	arr, err := getGen2[duckdb_string_t](C.DUCKDB_TYPE_VARCHAR, int(r.chunkRowCount), vector)
-	validity := C.duckdb_vector_get_validity(vector)
-	for i, s := range arr {
-		if isValid(validity, i) {
-			buf = append(buf, toStr(s))
-		} else {
-			buf = append(buf, nil)
+	arr, err := getGen2[duckdb_string_t](C.DUCKDB_TYPE_VARCHAR, ln, vector)
+
+	_clearFromMask(arr, vector)
+
+	buf = buf[:0]
+	for i := 0; i < ln; i++ {
+		buf = append(buf, toStr(arr[i]))
+	}
+
+	return buf, err
+}
+
+func _clearFromMask[T any](buf []T, vector C.duckdb_vector) {
+	ln := len(buf)
+	var validity = (*[1 << 31]uint64)(unsafe.Pointer(C.duckdb_vector_get_validity(vector)))[:Blocks(ln)]
+	clearFromMask(buf, validity, ln)
+}
+
+func clearFromMask[T any](buf []T, validity []uint64, ln int) {
+	var z T
+	for k, bitset := range validity {
+		bitset = ^bitset
+		if k == ln>>6 {
+			bitset &= (1 << uint(ln&63)) - 1
+		}
+
+		for bitset != 0 {
+			idx := k<<6 + bits.TrailingZeros64(bitset)
+			buf[idx] = z
+			bitset ^= bitset & -bitset
 		}
 	}
-	return buf, err
 }
 
 func getVec[T any](vector C.duckdb_vector) *[1 << 31]T {
@@ -169,7 +201,7 @@ func getGen2[T any](typ C.duckdb_type, n int, vector C.duckdb_vector) ([]T, erro
 	case typ:
 		return getVec[T](vector)[:n], nil
 	default:
-		return nil, errInvalidType
+		return nil, fmt.Errorf("invalid %v", ty)
 	}
 }
 
@@ -188,12 +220,15 @@ func (r *rows) StrListVec(colIdx int, buf [][][]byte) ([][][]byte, error) {
 		return nil, err
 	}
 
+	_clearFromMask(entries, vector)
+
 	for i, entry := range entries {
 		buf[i] = buf[i][:0]
 		for _, v := range full[entry.offset : entry.offset+entry.length] {
 			buf[i] = append(buf[i], toStr(v))
 		}
 	}
+
 	return buf, nil
 }
 
@@ -218,15 +253,6 @@ func listVec[T any](r *rows, colIdx int, typ C.duckdb_type, buf [][]T) ([][]T, e
 	return buf, nil
 }
 
-//; idx_t ; bool is_valid = validity_mask[entry_idx] & (1 « idx_in_entry);
-
-func isValid(vec *C.uint64_t, rowIdx int) bool {
-	var entry_idx = rowIdx / 64
-	var idx_in_entry = rowIdx % 64
-	var vect = (*[1 << 31]uint64)(unsafe.Pointer(vec))
-	return vect[entry_idx]&(1<<idx_in_entry) != 0
-}
-
 func toStr(v duckdb_string_t) []byte {
 	if v.length == 0 {
 		return nil
@@ -239,16 +265,48 @@ func toStr(v duckdb_string_t) []byte {
 	}
 }
 
-func (r *rows) TsVec(colIdx int, buf []time.Time) ([]time.Time, error) {
-	dates, err := getGen[C.duckdb_timestamp](C.DUCKDB_TYPE_TIMESTAMP_S, r, colIdx)
+var timeConverter = map[C.duckdb_type]func(int64) time.Time{
+	C.DUCKDB_TYPE_TIME: func(i int64) time.Time {
+		return time.UnixMicro(i).UTC()
+	},
+	C.DUCKDB_TYPE_TIMESTAMP: func(micros int64) time.Time {
+		return time.UnixMicro(micros).UTC()
+	},
+	C.DUCKDB_TYPE_TIMESTAMP_S: func(i int64) time.Time {
+		return time.Unix(i, 0).UTC()
+	},
+	C.DUCKDB_TYPE_TIMESTAMP_MS: func(i int64) time.Time {
+		return time.Unix(i/1000, (i%1000)*1000).UTC()
+	},
+	C.DUCKDB_TYPE_TIMESTAMP_NS: func(i int64) time.Time {
+		return time.Unix(0, i).UTC()
+	},
+}
+
+func (r *rows) TimeVec(colIdx int, buf []time.Time) ([]time.Time, error) {
+	return r.tsVec(colIdx, buf, C.DUCKDB_TYPE_TIME)
+}
+func (r *rows) TimestampVec(colIdx int, buf []time.Time) ([]time.Time, error) {
+	return r.tsVec(colIdx, buf, C.DUCKDB_TYPE_TIMESTAMP)
+}
+
+func (r *rows) tsVec(colIdx int, buf []time.Time, t C.duckdb_type) ([]time.Time, error) {
+	conv, ok := timeConverter[t]
+	if !ok {
+		return buf, fmt.Errorf("invalixxd")
+	}
+	dates, err := getGen[C.duckdb_timestamp](t, r, colIdx)
 	if err != nil {
 		return nil, err
 	}
 	for _, v := range dates {
-		buf = append(buf, time.Unix(int64(v.micros), 0).UTC())
+		buf = append(buf, conv(int64(v.micros)))
 	}
 	return buf, nil
 }
+
+//return time.UnixMicro(int64(get[C.duckdb_time](vector, rowIdx).micros)).UTC(), nil
+//return time.UnixMicro(int64(get[C.duckdb_timestamp](vector, rowIdx).micros)).UTC(), nil
 
 func (r *rows) DateVec(colIdx int, buf []time.Time) ([]time.Time, error) {
 
