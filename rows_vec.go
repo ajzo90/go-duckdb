@@ -6,6 +6,7 @@ package duckdb
 import "C"
 import (
 	"fmt"
+	"github.com/cespare/xxhash"
 	"io"
 	"math/bits"
 	"time"
@@ -30,7 +31,9 @@ type VecScanner interface {
 	F64Vec(colIdx int) ([]float64, error)
 	F32ListVec(colIdx int, buf [][]float32) ([][]float32, error)
 	F64ListVec(colIdx int, buf [][]float64) ([][]float64, error)
-	StringVec(colIdx int, buf [][]byte) ([][]byte, error)
+	StringVec(colIdx int, buf [][]byte, alloc []byte) ([][]byte, []byte, error)
+	StringVecHash(colIdx int, buf []uint64) ([]uint64, error)
+	StringVecDict(colIdx int, buf []uint32, hashes map[uint64]uint32) ([]uint32, error)
 	StrListVec(colIdx int, buf [][][]byte) ([][][]byte, error)
 	BoolVec(colIdx int) ([]bool, error)
 	BoolListVec(colIdx int, buf [][]bool) ([][]bool, error)
@@ -146,16 +149,61 @@ func Blocks(n int) int {
 	return (n-1)/64 + 1
 }
 
-func (r *rows) StringVec(colIdx int, buf [][]byte) ([][]byte, error) {
+func (r *rows) StringVec(colIdx int, buf [][]byte, alloc []byte) ([][]byte, []byte, error) {
 	var ln = int(r.chunkRowCount)
 	vector := C.duckdb_data_chunk_get_vector(r.chunk, C.idx_t(colIdx))
 	arr, err := getGen2[duckdb_string_t](C.DUCKDB_TYPE_VARCHAR, ln, vector)
+	if err != nil {
+		return buf, alloc, err
+	}
 
 	_clearFromMask(arr, vector)
 
-	buf = buf[:0]
-	for i := 0; i < ln; i++ {
-		buf = append(buf, toStr(arr[i]))
+	for _, v := range arr {
+		off := len(alloc)
+		alloc = append(alloc, toStr(v)[:v.length]...)
+		buf = append(buf, alloc[off:])
+	}
+
+	return buf, alloc, err
+}
+
+func (r *rows) StringVecHash(colIdx int, buf []uint64) ([]uint64, error) {
+	var ln = int(r.chunkRowCount)
+	vector := C.duckdb_data_chunk_get_vector(r.chunk, C.idx_t(colIdx))
+	arr, err := getGen2[duckdb_string_t](C.DUCKDB_TYPE_VARCHAR, ln, vector)
+	if err != nil {
+		return buf, err
+	}
+
+	_clearFromMask(arr, vector)
+
+	for _, v := range arr {
+		buf = append(buf, xxhash.Sum64(toStr(v)[:v.length]))
+	}
+
+	return buf, err
+}
+
+func (r *rows) StringVecDict(colIdx int, buf []uint32, hashes map[uint64]uint32) ([]uint32, error) {
+	var ln = int(r.chunkRowCount)
+	vector := C.duckdb_data_chunk_get_vector(r.chunk, C.idx_t(colIdx))
+	arr, err := getGen2[duckdb_string_t](C.DUCKDB_TYPE_VARCHAR, ln, vector)
+	if err != nil {
+		return buf, err
+	}
+
+	_clearFromMask(arr, vector)
+
+	for i := range arr {
+		v := toStr(arr[i])[:arr[i].length]
+		h := xxhash.Sum64(v)
+		ref, exist := hashes[h]
+		if !exist {
+			ref = uint32(len(hashes))
+			hashes[h] = ref
+		}
+		buf = append(buf, ref)
 	}
 
 	return buf, err
@@ -225,7 +273,7 @@ func (r *rows) StrListVec(colIdx int, buf [][][]byte) ([][][]byte, error) {
 	for i, entry := range entries {
 		buf[i] = buf[i][:0]
 		for _, v := range full[entry.offset : entry.offset+entry.length] {
-			buf[i] = append(buf[i], toStr(v))
+			buf[i] = append(buf[i], toStr(v)[:v.length])
 		}
 	}
 
@@ -253,15 +301,13 @@ func listVec[T any](r *rows, colIdx int, typ C.duckdb_type, buf [][]T) ([][]T, e
 	return buf, nil
 }
 
-func toStr(v duckdb_string_t) []byte {
-	if v.length == 0 {
-		return nil
-	} else if v.length <= stringInlineLength {
+func toStr(v duckdb_string_t) *[1 << 31]byte {
+	if v.length <= stringInlineLength {
 		// inline data is stored from byte 4..16 (up to 12 bytes)
-		return (*[1 << 31]byte)(unsafe.Pointer(&v.prefix))[:v.length]
+		return (*[1 << 31]byte)(unsafe.Pointer(&v.prefix))
 	} else {
 		// any longer strings are stored as a pointer in `ptr`
-		return (*[1 << 31]byte)(unsafe.Pointer(v.ptr))[:v.length]
+		return (*[1 << 31]byte)(unsafe.Pointer(v.ptr))
 	}
 }
 
