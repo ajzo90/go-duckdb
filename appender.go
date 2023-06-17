@@ -131,10 +131,7 @@ func (a *Appender) AppendRowArray(args []driver.Value) error {
 			rv = C.duckdb_append_blob(*a.appender, unsafe.Pointer(&v[0]), C.uint64_t(len(v)))
 		case string:
 			str := C.CString(v)
-			if rv = C.duckdb_append_varchar(*a.appender, str); rv == C.DuckDBError {
-				C.free(unsafe.Pointer(str))
-				return fmt.Errorf("couldn't append parameter %d (type %T)", i, v)
-			}
+			rv = C.duckdb_append_varchar(*a.appender, str)
 			C.free(unsafe.Pointer(str))
 		case time.Time:
 			var dt C.duckdb_timestamp
@@ -145,7 +142,8 @@ func (a *Appender) AppendRowArray(args []driver.Value) error {
 			return fmt.Errorf("couldn't append unsupported parameter %d (type %T)", i, v)
 		}
 		if rv == C.DuckDBError {
-			return fmt.Errorf("couldn't append parameter %d (type %T)", i, v)
+			dbErr := C.GoString(C.duckdb_appender_error(*a.appender))
+			return fmt.Errorf("couldn't append parameter %d (type %T): %s", i, v, dbErr)
 		}
 	}
 
@@ -157,6 +155,4 @@ func (a *Appender) AppendRowArray(args []driver.Value) error {
 	return nil
 }
 
-var (
-	errCouldNotAppend = errors.New("could not append parameter")
-)
+var errCouldNotAppend = errors.New("could not append parameter")
