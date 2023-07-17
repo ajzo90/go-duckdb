@@ -5,6 +5,7 @@ package duckdb
 */
 import "C"
 import (
+	"encoding/binary"
 	"fmt"
 	"github.com/cespare/xxhash"
 	"io"
@@ -39,12 +40,15 @@ type VecScanner interface {
 	BoolListVec(colIdx int, buf [][]bool) ([][]bool, error)
 	TimeVec(colIdx int, buf []time.Time) ([]time.Time, error)
 	TimestampVec(colIdx int, buf []time.Time) ([]time.Time, error)
+	UUIDVec(colIdx int, vec [][16]byte) ([][16]byte, error)
 	DateVec(colIdx int, buf []time.Time) ([]time.Time, error)
 	LoadVec() error
 	NumValues() int
 }
 
 var _ VecScanner = &rows{}
+
+type RowsImpl = rows
 
 func (r *rows) LoadVec() error {
 	C.duckdb_destroy_data_chunk(&r.chunk)
@@ -64,11 +68,49 @@ func (r *rows) NumValues() int {
 }
 
 func (r *rows) BigIntVec(colIdx int, vec []int64) ([]int64, error) {
+	var ln = int(r.chunkRowCount)
 	vector := C.duckdb_data_chunk_get_vector(r.chunk, C.idx_t(colIdx))
 	vec = vec[:0]
+
+	arr, err := getGen2[duckdb_string_t](C.DUCKDB_TYPE_HUGEINT, ln, vector)
+	if err != nil {
+		return vec, err
+	}
+
+	_clearFromMask(arr, vector)
+
 	for i := 0; i < int(r.chunkRowCount); i++ {
 		hi := get[C.duckdb_hugeint](vector, C.idx_t(i))
-		vec = append(vec, hugeIntToNative(hi).Int64())
+		vec = append(vec, int64(hi.lower))
+		if hi.upper != 0 {
+			return nil, fmt.Errorf("overflow")
+		}
+	}
+	return vec, nil
+}
+
+func (r *rows) UUIDVec(colIdx int, vec [][16]byte) ([][16]byte, error) {
+	var ln = int(r.chunkRowCount)
+	vector := C.duckdb_data_chunk_get_vector(r.chunk, C.idx_t(colIdx))
+	vec = vec[:0]
+
+	arr, err := getGen2[duckdb_string_t](C.DUCKDB_TYPE_UUID, ln, vector)
+	if err != nil {
+		return vec, err
+	}
+
+	_clearFromMask(arr, vector)
+
+	if cap(vec) < ln {
+		vec = make([][16]byte, ln)
+	} else {
+		vec = vec[:ln]
+	}
+
+	for i := 0; i < int(r.chunkRowCount); i++ {
+		hi := get[C.duckdb_hugeint](vector, C.idx_t(i))
+		binary.BigEndian.PutUint64(vec[i][:8], uint64(hi.upper)^1<<63)
+		binary.BigEndian.PutUint64(vec[i][8:], uint64(hi.lower))
 	}
 	return vec, nil
 }
@@ -245,11 +287,11 @@ func getGen2[T any](typ C.duckdb_type, n int, vector C.duckdb_vector) ([]T, erro
 	ty := C.duckdb_vector_get_column_type(vector)
 	defer C.duckdb_destroy_logical_type(&ty)
 
-	switch C.duckdb_get_type_id(ty) {
+	switch resTyp := C.duckdb_get_type_id(ty); resTyp {
 	case typ:
 		return getVec[T](vector)[:n], nil
 	default:
-		return nil, fmt.Errorf("invalid %v", ty)
+		return nil, fmt.Errorf("invalid %v %v", typ, resTyp)
 	}
 }
 
