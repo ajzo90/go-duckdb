@@ -79,14 +79,24 @@ func (r *rows) BigIntVec(colIdx int, vec []int64) ([]int64, error) {
 
 	_clearFromMask(arr, vector)
 
+	vec = initVec(vec, ln)
+
 	for i := 0; i < int(r.chunkRowCount); i++ {
 		hi := get[C.duckdb_hugeint](vector, C.idx_t(i))
-		vec = append(vec, int64(hi.lower))
+		vec[i] = int64(hi.lower)
 		if hi.upper != 0 {
-			return nil, fmt.Errorf("overflow")
+			return nil, fmt.Errorf("unexpected overflow in converting HugeInt to BigInt")
 		}
 	}
 	return vec, nil
+}
+
+func initVec[T any](vec []T, n int) []T {
+	if cap(vec) < n {
+		return make([]T, n)
+	} else {
+		return vec[:n]
+	}
 }
 
 func (r *rows) UUIDVec(colIdx int, vec [][16]byte) ([][16]byte, error) {
@@ -101,12 +111,7 @@ func (r *rows) UUIDVec(colIdx int, vec [][16]byte) ([][16]byte, error) {
 
 	_clearFromMask(arr, vector)
 
-	if cap(vec) < ln {
-		vec = make([][16]byte, ln)
-	} else {
-		vec = vec[:ln]
-	}
-
+	vec = initVec(vec, ln)
 	for i := 0; i < int(r.chunkRowCount); i++ {
 		hi := get[C.duckdb_hugeint](vector, C.idx_t(i))
 		binary.BigEndian.PutUint64(vec[i][:8], uint64(hi.upper)^1<<63)
@@ -280,7 +285,12 @@ func getVec[T any](vector C.duckdb_vector) *[1 << 31]T {
 
 func getGen[T any](typ C.duckdb_type, r *rows, colIdx int) ([]T, error) {
 	vector := C.duckdb_data_chunk_get_vector(r.chunk, C.idx_t(colIdx))
-	return getGen2[T](typ, int(r.chunkRowCount), vector)
+	v, err := getGen2[T](typ, int(r.chunkRowCount), vector)
+	if err != nil {
+		return nil, err
+	}
+	_clearFromMask(v, vector)
+	return v, err
 }
 
 func getGen2[T any](typ C.duckdb_type, n int, vector C.duckdb_vector) ([]T, error) {
