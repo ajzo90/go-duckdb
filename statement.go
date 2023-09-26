@@ -222,6 +222,8 @@ func (s *stmt) execute(ctx context.Context, args []driver.NamedValue) (*C.duckdb
 			return nil, errors.New(dbErr)
 		case C.DUCKDB_PENDING_RESULT_NOT_READY:
 			// we are not done yet, continue to next task
+		case C.DUCKDB_PENDING_NO_TASKS_AVAILABLE:
+
 		default:
 			panic(fmt.Sprintf("found unknown state while pending execute: %v", state))
 		}
