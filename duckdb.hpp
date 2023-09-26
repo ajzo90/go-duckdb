@@ -1,3 +1,4 @@
+#ifdef GODUCKDB_FROM_SOURCE
 /*
 Copyright 2018-2023 Stichting DuckDB Foundation
 
@@ -38546,3 +38547,5 @@ public:
 } // namespace duckdb
 
 
+
+#endif
