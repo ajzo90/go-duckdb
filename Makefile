@@ -1,4 +1,4 @@
-DUCKDB_VERSION=0.9.0
+DUCKDB_VERSION=0.9.2
 
 .PHONY: install
 install:
