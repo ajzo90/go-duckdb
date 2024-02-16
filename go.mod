@@ -3,10 +3,10 @@ module github.com/marcboeker/go-duckdb
 go 1.18
 
 require (
-	github.com/cespare/xxhash v1.1.0
-	github.com/google/uuid v1.3.0
+	github.com/apache/arrow/go/v14 v14.0.2
+	github.com/google/uuid v1.3.1
 	github.com/mitchellh/mapstructure v1.5.0
-	github.com/stretchr/testify v1.8.1
+	github.com/stretchr/testify v1.8.4
 )
 
 require (
