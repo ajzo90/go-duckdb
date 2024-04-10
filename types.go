@@ -13,7 +13,37 @@ import (
 	"github.com/mitchellh/mapstructure"
 )
 
+var unsupportedAppenderTypeMap = map[C.duckdb_type]string{
+	C.DUCKDB_TYPE_INVALID:  "INVALID",
+	C.DUCKDB_TYPE_DATE:     "DATE",
+	C.DUCKDB_TYPE_TIME:     "TIME",
+	C.DUCKDB_TYPE_INTERVAL: "INTERVAL",
+	C.DUCKDB_TYPE_HUGEINT:  "HUGEINT",
+	C.DUCKDB_TYPE_UHUGEINT: "UHUGEINT",
+	C.DUCKDB_TYPE_DECIMAL:  "DECIMAL",
+	C.DUCKDB_TYPE_ENUM:     "ENUM",
+	C.DUCKDB_TYPE_MAP:      "MAP",
+	C.DUCKDB_TYPE_UNION:    "UNION",
+	C.DUCKDB_TYPE_BIT:      "BIT",
+	C.DUCKDB_TYPE_TIME_TZ:  "TIME_TZ",
+}
+
+type numericType interface {
+	int | int8 | int16 | int32 | int64 | uint | uint8 | uint16 | uint32 | uint64 | float32 | float64
+}
+
+func convertNumericType[srcT numericType, destT numericType](val srcT) destT {
+	return destT(val)
+}
+
 type UUID [16]byte
+
+func (u *UUID) Scan(v any) error {
+	if n := copy(u[:], v.([]byte)); n != 16 {
+		return fmt.Errorf("invalid UUID length: %d", n)
+	}
+	return nil
+}
 
 // duckdb_hugeint is composed of (lower, upper) components.
 // The value is computed as: upper * 2^64 + lower

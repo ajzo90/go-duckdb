@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -52,13 +51,54 @@ func TestOpen(t *testing.T) {
 		require.NoError(t, res.Scan(&species))
 		require.Equal(t, "Gopher", species)
 	})
+}
 
-	t.Run("with invalid config", func(t *testing.T) {
-		_, err := sql.Open("duckdb", "?threads=NaN")
+func TestConnectorBootQueries(t *testing.T) {
+	t.Run("many boot queries", func(t *testing.T) {
+		connector, err := NewConnector("", func(execer driver.ExecerContext) error {
+			bootQueries := []string{
+				"INSTALL 'json'",
+				"LOAD 'json'",
+				"SET schema=main",
+				"SET search_path=main",
+			}
 
-		if !errors.Is(err, errSetConfig) {
-			t.Fatal("invalid config should not be accepted")
-		}
+			for _, query := range bootQueries {
+				_, err := execer.ExecContext(context.Background(), query, nil)
+				require.NoError(t, err)
+			}
+			return nil
+		})
+		require.NoError(t, err)
+
+		db := sql.OpenDB(connector)
+		defer db.Close()
+	})
+
+	t.Run("readme example", func(t *testing.T) {
+		db, err := sql.Open("duckdb", "foo.db")
+		require.NoError(t, err)
+		_ = db.Close()
+
+		connector, err := NewConnector("foo.db?access_mode=read_only&threads=4", func(execer driver.ExecerContext) error {
+			bootQueries := []string{
+				"INSTALL 'json'",
+				"LOAD 'json'",
+			}
+
+			for _, query := range bootQueries {
+				_, err := execer.ExecContext(context.Background(), query, nil)
+				require.NoError(t, err)
+			}
+			return nil
+		})
+		require.NoError(t, err)
+
+		db = sql.OpenDB(connector)
+		_ = db.Close()
+
+		err = os.Remove("foo.db")
+		require.NoError(t, err)
 	})
 }
 
@@ -626,6 +666,30 @@ func TestBlob(t *testing.T) {
 	})
 }
 
+func TestTimestampTZ(t *testing.T) {
+	t.Parallel()
+	db := openDB(t)
+	defer db.Close()
+
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS tbl (tz TIMESTAMPTZ)")
+	require.NoError(t, err)
+
+	IST, err := time.LoadLocation("Asia/Kolkata")
+	require.NoError(t, err)
+
+	const longForm = "2006-01-02 15:04:05 MST"
+	ts, err := time.ParseInLocation(longForm, "2016-01-17 20:04:05 IST", IST)
+	require.NoError(t, err)
+
+	_, err = db.Exec("INSERT INTO tbl (tz) VALUES(?)", ts)
+	require.NoError(t, err)
+
+	var tz time.Time
+	err = db.QueryRow("SELECT tz FROM tbl").Scan(&tz)
+	require.NoError(t, err)
+	require.Equal(t, ts.UTC(), tz)
+}
+
 func TestBoolean(t *testing.T) {
 	t.Parallel()
 	db := openDB(t)
@@ -960,6 +1024,12 @@ func TestTypeNamesAndScanTypes(t *testing.T) {
 			sql:      "SELECT '53b4e983-b287-481a-94ad-6e3c90489913'::UUID AS col",
 			value:    []byte{0x53, 0xb4, 0xe9, 0x83, 0xb2, 0x87, 0x48, 0x1a, 0x94, 0xad, 0x6e, 0x3c, 0x90, 0x48, 0x99, 0x13},
 			typeName: "UUID",
+		},
+		// DUCKDB_TYPE_TIMESTAMP_TZ
+		{
+			sql:      "SELECT '1992-09-20 11:30:00'::TIMESTAMPTZ AS col",
+			value:    time.Date(1992, 9, 20, 11, 30, 0, 0, time.UTC),
+			typeName: "TIMESTAMPTZ",
 		},
 	}
 

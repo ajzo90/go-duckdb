@@ -50,14 +50,14 @@ Alternatively, you can use [sql.OpenDB](https://cs.opensource.google/go/go/+/go1
 Here's an example that installs and loads the JSON extension when opening a database with `sql.OpenDB(connector)`.
 
 ```go
-connector, err := duckdb.NewConnector("/path/to/foo.db?access_mode=read_only&threads=4", func(execer driver.Execer) error {
+connector, err := duckdb.NewConnector("/path/to/foo.db?access_mode=read_only&threads=4", func(execer driver.ExecerContext) error {
     bootQueries := []string{
         "INSTALL 'json'",
         "LOAD 'json'",
     }
 
     for _, query := range bootQueries {
-        _, err = execer.Exec(query, nil)
+        _, err = execer.ExecContext(context.Background(), query, nil)
         if err != nil {
             ...
         }
@@ -74,7 +74,7 @@ defer db.Close()
 
 Please refer to the [database/sql](https://godoc.org/database/sql) documentation for further usage instructions.
 
-## A Note on Memory Allocation
+## Memory Allocation
 
 DuckDB lives in-process. Therefore, all its memory lives in the driver. All allocations live in the host process, which
 is the Go application. Especially for long-running applications, it is crucial to call the corresponding `Close`-functions as specified
@@ -163,6 +163,17 @@ for rdr.Next() {
 }
 ```
 
+## Vendoring
+
+If you want to vendor a module containing `go-duckdb`, please use `modvendor` to include the missing header files and libraries.
+See issue [#174](https://github.com/marcboeker/go-duckdb/issues/174#issuecomment-1979097864) for more details.
+
+1. `go install github.com/goware/modvendor@latest`
+2. `go mod vendor`
+3. `modvendor -copy="**/*.a **/*.h" -v`
+
+Now you can build your module as usual.
+
 ## Linking DuckDB
 
 By default, `go-duckdb` statically links DuckDB into your binary. Statically linking DuckDB adds around 30 MB to your binary size. On Linux (Intel) and macOS (Intel and ARM), `go-duckdb` bundles pre-compiled static libraries for fast builds.
@@ -178,3 +189,13 @@ LD_LIBRARY_PATH=/path/to/libs ./main
 CGO_ENABLED=1 CGO_LDFLAGS="-L/path/to/libs" go build -tags=duckdb_use_lib main.go
 DYLD_LIBRARY_PATH=/path/to/libs ./main
 ```
+
+## Notes
+
+`TIMESTAMP vs. TIMESTAMP_TZ`
+
+In the C API, DuckDB stores both `TIMESTAMP` and `TIMESTAMP_TZ` as `duckdb_timestamp`, which holds the number of
+microseconds elapsed since January 1, 1970 UTC (i.e., an instant without offset information). 
+When passing a `time.Time` to go-duckdb, go-duckdb transforms it to an instant with `UnixMicro()`, 
+even when using `TIMESTAMP_TZ`. Later, scanning either type of value returns an instant, as SQL types do not model 
+time zone information for individual values.
