@@ -137,7 +137,6 @@ func main() {
 	check(err)
 	defer rows.Close()
 
-	// Get column names
 	columns, err := rows.Columns()
 	if err != nil {
 		panic(err.Error())
@@ -149,7 +148,6 @@ func main() {
 		scanArgs[i] = &values[i]
 	}
 
-	// Fetch rows
 	for rows.Next() {
 		err = rows.Scan(scanArgs...)
 		if err != nil {
