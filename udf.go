@@ -65,7 +65,7 @@ func udf_bind(info C.duckdb_bind_info) {
 
 	var args []any
 	for i, v := range tfunc.GetArguments() {
-		_, typ, err := getDuckdbTypeFromValue(v)
+		typ, err := getDuckdbTypeFromValue(v)
 		if err != nil {
 			udf_bind_error(info, err)
 			return
@@ -82,14 +82,14 @@ func udf_bind(info C.duckdb_bind_info) {
 	schemaRef := tfunc.BindArguments(args...)
 	schema := tfunc.GetSchema(schemaRef)
 	for _, v := range schema.Columns {
-		t, _, err := getDuckdbTypeFromValue(v.V)
+		t, err := getDuckdbTypeFromValue(v.V)
 		if err != nil {
 			udf_bind_error(info, err)
 			return
 		}
 
 		colName := C.CString(v.Name)
-		C.duckdb_bind_add_result_column(info, colName, t)
+		C.duckdb_bind_add_result_column(info, colName, C.duckdb_create_logical_type(t))
 		C.free(unsafe.Pointer(colName))
 	}
 
@@ -157,11 +157,11 @@ func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableF
 		C.duckdb_table_function_set_extra_info(tableFunction, extra_info, C.duckdb_delete_callback_t(C.free))
 
 		for _, v := range function.GetArguments() {
-			argtype, _, err := getDuckdbTypeFromValue(v)
+			argtype, err := getDuckdbTypeFromValue(v)
 			if err != nil {
 				return err
 			}
-			C.duckdb_table_function_add_parameter(tableFunction, argtype)
+			C.duckdb_table_function_add_parameter(tableFunction, C.duckdb_create_logical_type(argtype))
 		}
 
 		state := C.duckdb_register_table_function(duckConn.duckdbCon, tableFunction)
@@ -172,19 +172,27 @@ func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableF
 	})
 }
 
-func getDuckdbTypeFromValue(v any) (C.duckdb_logical_type, C.duckdb_type, error) {
+func getDuckdbTypeFromValue(v any) (C.duckdb_type, error) {
 	switch v.(type) {
 	case int64:
-		return C.duckdb_create_logical_type(C.DUCKDB_TYPE_BIGINT), C.DUCKDB_TYPE_BIGINT, nil
+		return C.DUCKDB_TYPE_BIGINT, nil
 	case string:
-		return C.duckdb_create_logical_type(C.DUCKDB_TYPE_VARCHAR), C.DUCKDB_TYPE_VARCHAR, nil
+		return C.DUCKDB_TYPE_VARCHAR, nil
+	case bool:
+		return C.DUCKDB_TYPE_BOOLEAN, nil
 	default:
-		return C.duckdb_logical_type(nil), C.DUCKDB_TYPE_INVALID, unsupportedTypeError(reflect.TypeOf(v).String())
+		return C.DUCKDB_TYPE_INVALID, unsupportedTypeError(reflect.TypeOf(v).String())
 	}
 }
 
 func getValue(t C.duckdb_type, v C.duckdb_value) (any, error) {
 	switch t {
+	case C.DUCKDB_TYPE_BOOLEAN:
+		if C.duckdb_get_int64(v) != 0 {
+			return true, nil
+		} else {
+			return false, nil
+		}
 	case C.DUCKDB_TYPE_BIGINT:
 		return int64(C.duckdb_get_int64(v)), nil
 	case C.DUCKDB_TYPE_VARCHAR:
