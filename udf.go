@@ -63,17 +63,26 @@ func udf_bind(info C.duckdb_bind_info) {
 	extra_info := C.duckdb_bind_get_extra_info(info)
 	tfunc := tableFuncs[*(*int)(extra_info)]
 
-	value := C.duckdb_bind_get_parameter(info, C.ulonglong(0))
-	arg0, err := getValue(C.DUCKDB_TYPE_BIGINT, value)
-	if err != nil {
-		udf_bind_error(info, err)
-		return
+	var args []any
+	for i, v := range tfunc.GetArguments() {
+		_, typ, err := getDuckdbTypeFromValue(v)
+		if err != nil {
+			udf_bind_error(info, err)
+			return
+		}
+		value := C.duckdb_bind_get_parameter(info, C.ulonglong(i))
+		arg, err := getValue(typ, value)
+		if err != nil {
+			udf_bind_error(info, err)
+			return
+		}
+		args = append(args, arg)
 	}
 
-	schemaRef := tfunc.BindArguments(arg0)
+	schemaRef := tfunc.BindArguments(args...)
 	schema := tfunc.GetSchema(schemaRef)
 	for _, v := range schema.Columns {
-		t, err := getDuckdbTypeFromValue(v.V)
+		t, _, err := getDuckdbTypeFromValue(v.V)
 		if err != nil {
 			udf_bind_error(info, err)
 			return
@@ -148,7 +157,7 @@ func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableF
 		C.duckdb_table_function_set_extra_info(tableFunction, extra_info, C.duckdb_delete_callback_t(C.free))
 
 		for _, v := range function.GetArguments() {
-			argtype, err := getDuckdbTypeFromValue(v)
+			argtype, _, err := getDuckdbTypeFromValue(v)
 			if err != nil {
 				return err
 			}
@@ -163,14 +172,14 @@ func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableF
 	})
 }
 
-func getDuckdbTypeFromValue(v any) (C.duckdb_logical_type, error) {
+func getDuckdbTypeFromValue(v any) (C.duckdb_logical_type, C.duckdb_type, error) {
 	switch v.(type) {
 	case int64:
-		return C.duckdb_create_logical_type(C.DUCKDB_TYPE_BIGINT), nil
+		return C.duckdb_create_logical_type(C.DUCKDB_TYPE_BIGINT), C.DUCKDB_TYPE_BIGINT, nil
 	case string:
-		return C.duckdb_create_logical_type(C.DUCKDB_TYPE_VARCHAR), nil
+		return C.duckdb_create_logical_type(C.DUCKDB_TYPE_VARCHAR), C.DUCKDB_TYPE_VARCHAR, nil
 	default:
-		return C.duckdb_logical_type(nil), unsupportedTypeError(reflect.TypeOf(v).String())
+		return C.duckdb_logical_type(nil), C.DUCKDB_TYPE_INVALID, unsupportedTypeError(reflect.TypeOf(v).String())
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"github.com/marcboeker/go-duckdb"
 	"log"
 	"reflect"
-	"strconv"
 	"sync"
 	"sync/atomic"
 )
@@ -15,12 +14,20 @@ import (
 type schema struct {
 	schema *duckdb.Schema
 	rows   int64
+	strVal string
 }
 
 type myTableUDF struct {
-	schemas       map[duckdb.Ref]*schema
-	localStateMtx sync.RWMutex
-	localStates   map[duckdb.Ref]*localState
+	schemas     map[duckdb.Ref]*schema
+	localStates map[duckdb.Ref]*udfScanner
+	mtx         sync.RWMutex
+}
+
+func newMyTableUDF() *myTableUDF {
+	return &myTableUDF{
+		schemas:     map[duckdb.Ref]*schema{},
+		localStates: map[duckdb.Ref]*udfScanner{},
+	}
 }
 
 func (d *myTableUDF) GetArguments() []any {
@@ -31,10 +38,11 @@ func (d *myTableUDF) GetArguments() []any {
 }
 
 func (d *myTableUDF) BindArguments(args ...any) (schem duckdb.Ref) {
-	ref := duckdb.Ref(len(d.schemas))
 	var rows = args[0].(int64)
-	d.schemas[ref] = &schema{
-		rows: rows,
+	var strVal = args[1].(string)
+	schema := &schema{
+		rows:   rows,
+		strVal: strVal,
 		schema: &duckdb.Schema{
 			Columns: []duckdb.ColumnDef{
 				{"result", int64(0)},
@@ -45,21 +53,29 @@ func (d *myTableUDF) BindArguments(args ...any) (schem duckdb.Ref) {
 			MaxThreads:       12,
 		},
 	}
+	d.mtx.Lock()
+	defer d.mtx.Unlock()
+
+	ref := duckdb.Ref(len(d.schemas))
+	d.schemas[ref] = schema
 	return ref
 }
 
 func (d *myTableUDF) GetSchema(ref duckdb.Ref) *duckdb.Schema {
+	d.mtx.RLock()
+	defer d.mtx.RUnlock()
+
 	return d.schemas[ref].schema
 }
 
-type localState struct {
+type udfScanner struct {
 	schema  *schema
 	vecSize int
 	scr     []byte
 	fns     []func(vector *duckdb.Vector)
 }
 
-func (l *localState) Scan(ch *duckdb.DataChunk) int {
+func (l *udfScanner) Scan(ch *duckdb.DataChunk) int {
 	rem := atomic.AddInt64(&l.schema.rows, -int64(l.vecSize))
 	if rem < 0 {
 		l.vecSize += int(rem)
@@ -76,8 +92,8 @@ func (l *localState) Scan(ch *duckdb.DataChunk) int {
 }
 
 func (d *myTableUDF) GetScanner(ref duckdb.Ref) duckdb.Scanner {
-	d.localStateMtx.RLock()
-	defer d.localStateMtx.RUnlock()
+	d.mtx.RLock()
+	defer d.mtx.RUnlock()
 
 	return d.localStates[ref]
 }
@@ -85,7 +101,11 @@ func (d *myTableUDF) GetScanner(ref duckdb.Ref) duckdb.Scanner {
 func (d *myTableUDF) InitScanner(parent duckdb.Ref, vecSize int) (scanner duckdb.Ref) {
 
 	schema := d.schemas[parent]
-	s := &localState{schema: schema, vecSize: vecSize, fns: make([]func(vector *duckdb.Vector), 0, len(schema.schema.Projection))}
+	s := &udfScanner{
+		schema:  schema,
+		vecSize: vecSize,
+		fns:     make([]func(vector *duckdb.Vector), 0, len(schema.schema.Projection)),
+	}
 	for _, pos := range schema.schema.Projection {
 		var fn func(vec *duckdb.Vector)
 		switch pos {
@@ -98,26 +118,20 @@ func (d *myTableUDF) InitScanner(parent duckdb.Ref, vecSize int) (scanner duckdb
 		case 1:
 			fn = func(vec *duckdb.Vector) {
 				for i := 0; i < s.vecSize; i++ {
-					vec.AppendBytes(strconv.AppendInt(s.scr[:0], int64(i%10), 10))
+					s.scr = append(s.scr[:0], schema.strVal...)
+					vec.AppendBytes(s.scr)
 				}
 			}
 		}
 		s.fns = append(s.fns, fn)
 	}
 
-	d.localStateMtx.Lock()
-	defer d.localStateMtx.Unlock()
+	d.mtx.Lock()
+	defer d.mtx.Unlock()
 
 	ref := duckdb.Ref(len(d.localStates))
 	d.localStates[ref] = s
 	return ref
-}
-
-func newMyTableUDF() *myTableUDF {
-	return &myTableUDF{
-		schemas:     map[duckdb.Ref]*schema{},
-		localStates: map[duckdb.Ref]*localState{},
-	}
 }
 
 func main() {
@@ -128,19 +142,17 @@ func main() {
 	defer db.Close()
 	conn, _ := db.Conn(context.Background())
 
-	if err := duckdb.RegisterTableUDF(conn, "udf", duckdb.UDFOptions{ProjectionPushdown: true}, newMyTableUDF()); err != nil {
-		panic(err)
-	}
+	check(duckdb.RegisterTableUDF(conn, "udf", duckdb.UDFOptions{ProjectionPushdown: true}, newMyTableUDF()))
 	check(db.Ping())
 
-	rows, err := db.QueryContext(context.Background(), " SELECT result, count(*)::int64 FROM udf(100000000, '123') group by grouping sets ((), (1)) order by 2 desc")
+	const q = `SELECT xxx, count(*)::int64 FROM udf(100000000, $1) group by grouping sets ((), (1)) order by 2 desc`
+
+	rows, err := db.QueryContext(context.Background(), q, "123")
 	check(err)
 	defer rows.Close()
 
 	columns, err := rows.Columns()
-	if err != nil {
-		panic(err.Error())
-	}
+	check(err)
 
 	values := make([]interface{}, len(columns))
 	scanArgs := make([]interface{}, len(values))
@@ -150,9 +162,7 @@ func main() {
 
 	for rows.Next() {
 		err = rows.Scan(scanArgs...)
-		if err != nil {
-			panic(err.Error())
-		}
+		check(err)
 		for i, value := range values {
 			switch value.(type) {
 			case nil:
@@ -166,7 +176,6 @@ func main() {
 		}
 		fmt.Println("-----------------------------------")
 	}
-
 }
 
 func check(args ...interface{}) {
