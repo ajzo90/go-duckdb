@@ -72,6 +72,7 @@ func udf_bind(info C.duckdb_bind_info) {
 		}
 		value := C.duckdb_bind_get_parameter(info, C.ulonglong(i))
 		arg, err := getValue(typ, value)
+		C.duckdb_destroy_value(&value)
 		if err != nil {
 			udf_bind_error(info, err)
 			return
@@ -94,7 +95,7 @@ func udf_bind(info C.duckdb_bind_info) {
 	}
 
 	C.duckdb_bind_set_cardinality(info, C.ulonglong(schema.Cardinality), C.bool(schema.ExactCardinality))
-	C.duckdb_bind_set_bind_data(info, malloc(int(schemaRef)), C.duckdb_delete_callback_t(nil))
+	C.duckdb_bind_set_bind_data(info, malloc(int(schemaRef)), C.duckdb_delete_callback_t(C.free))
 }
 
 //export udf_init
@@ -180,6 +181,8 @@ func getDuckdbTypeFromValue(v any) (C.duckdb_type, error) {
 		return C.DUCKDB_TYPE_VARCHAR, nil
 	case bool:
 		return C.DUCKDB_TYPE_BOOLEAN, nil
+	case float64:
+		return C.DUCKDB_TYPE_DOUBLE, nil
 	default:
 		return C.DUCKDB_TYPE_INVALID, unsupportedTypeError(reflect.TypeOf(v).String())
 	}
@@ -195,6 +198,8 @@ func getValue(t C.duckdb_type, v C.duckdb_value) (any, error) {
 		}
 	case C.DUCKDB_TYPE_BIGINT:
 		return int64(C.duckdb_get_int64(v)), nil
+	case C.DUCKDB_TYPE_DOUBLE:
+		panic("not implemented")
 	case C.DUCKDB_TYPE_VARCHAR:
 		str := C.duckdb_get_varchar(v)
 		ret := C.GoString(str)
@@ -243,6 +248,7 @@ type Vector struct {
 	float64s []float64
 	bools    []bool
 	cscr     cstr
+	bitmask  *C.uint64_t
 }
 
 func (d *Vector) AppendInt64(v ...int64) {
@@ -271,7 +277,7 @@ func (d *Vector) AppendBytes(v ...[]byte) {
 }
 
 func (d *Vector) SetNull(idx int) {
-	panic("not implemented")
+	C.duckdb_validity_set_row_invalid(d.bitmask, C.ulonglong(idx))
 }
 
 func initVecSlice[T int64 | uint64 | float64 | bool](sl *[]T, ptr unsafe.Pointer, sz int) {
@@ -287,6 +293,12 @@ func (d *Vector) init(sz int, v C.duckdb_vector, scr cstr) {
 	initVecSlice(&d.int64s, d.ptr, sz)
 	initVecSlice(&d.float64s, d.ptr, sz)
 	initVecSlice(&d.bools, d.ptr, sz)
+
+	C.duckdb_vector_ensure_validity_writable(v)
+	C.duckdb_vector_ensure_validity_writable(v)
+	mask := C.duckdb_vector_get_validity(v)
+	d.bitmask = mask
+
 }
 
 type cstr struct {

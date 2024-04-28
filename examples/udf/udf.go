@@ -16,6 +16,7 @@ type schema struct {
 	rows   int64
 	strVal string
 	bVal   bool
+	fVal   float64
 }
 
 type myTableUDF struct {
@@ -42,16 +43,16 @@ func (d *myTableUDF) GetArguments() []any {
 func (d *myTableUDF) BindArguments(args ...any) (schem duckdb.Ref) {
 	var rows = args[0].(int64)
 	var strVal = args[1].(string)
-	var b = args[2].(bool)
+	var bVal = args[2].(bool)
 	schema := &schema{
 		rows:   rows,
 		strVal: strVal,
-		bVal:   b,
+		bVal:   bVal,
 		schema: &duckdb.Schema{
 			Columns: []duckdb.ColumnDef{
 				{"result", int64(0)},
 				{"xxx", strVal},
-				{"b", b},
+				{"b", bVal},
 			},
 			Cardinality:      int(rows),
 			ExactCardinality: false,
@@ -130,7 +131,18 @@ func (d *myTableUDF) InitScanner(parent duckdb.Ref, vecSize int) (scanner duckdb
 		case 2:
 			fn = func(vec *duckdb.Vector) {
 				for i := 0; i < s.vecSize; i++ {
-					vec.AppendBool(schema.bVal)
+					if i%2 == 0 {
+						vec.AppendBool(schema.bVal)
+					} else {
+						vec.SetNull(i)
+					}
+				}
+
+			}
+		case 3:
+			fn = func(vec *duckdb.Vector) {
+				for i := 0; i < s.vecSize; i++ {
+					vec.AppendFloat64(schema.fVal)
 				}
 			}
 		}
@@ -156,7 +168,7 @@ func main() {
 	check(duckdb.RegisterTableUDF(conn, "udf", duckdb.UDFOptions{ProjectionPushdown: true}, newMyTableUDF()))
 	check(db.Ping())
 
-	const q = `SELECT xxx,b, count(*)::int64 FROM udf(100000000, $1, $2) group by grouping sets ((), (1,2)) order by 3 desc`
+	const q = `SELECT * FROM udf(10, $1, $2)`
 
 	rows, err := db.QueryContext(context.Background(), q, "123", true)
 	check(err)
