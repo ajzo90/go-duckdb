@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type schema struct {
@@ -50,13 +51,12 @@ func (d *myTableUDF) BindArguments(args ...any) (schem duckdb.Ref) {
 		bVal:   bVal,
 		schema: &duckdb.Schema{
 			Columns: []duckdb.ColumnDef{
-				{"result", int64(0)},
+				{"userId", int64(0)},
 				{"xxx", strVal},
 				{"b", bVal},
 			},
-			Cardinality:      int(rows),
-			ExactCardinality: false,
-			MaxThreads:       12,
+			Cardinality: int(rows),
+			MaxThreads:  12,
 		},
 	}
 	d.mtx.Lock()
@@ -112,6 +112,7 @@ func (d *myTableUDF) InitScanner(parent duckdb.Ref, vecSize int) (scanner duckdb
 		vecSize: vecSize,
 		fns:     make([]func(vector *duckdb.Vector), 0, len(schema.schema.Projection)),
 	}
+
 	for _, pos := range schema.schema.Projection {
 		var fn func(vec *duckdb.Vector)
 		switch pos {
@@ -134,7 +135,7 @@ func (d *myTableUDF) InitScanner(parent duckdb.Ref, vecSize int) (scanner duckdb
 					if i%2 == 0 {
 						vec.AppendBool(schema.bVal)
 					} else {
-						vec.SetNull(i)
+						vec.AppendNull()
 					}
 				}
 
@@ -142,7 +143,11 @@ func (d *myTableUDF) InitScanner(parent duckdb.Ref, vecSize int) (scanner duckdb
 		case 3:
 			fn = func(vec *duckdb.Vector) {
 				for i := 0; i < s.vecSize; i++ {
-					vec.AppendFloat64(schema.fVal)
+					if i%2 == 0 {
+						vec.AppendFloat64(schema.fVal)
+					} else {
+						vec.AppendNull()
+					}
 				}
 			}
 		}
@@ -165,12 +170,15 @@ func main() {
 	defer db.Close()
 	conn, _ := db.Conn(context.Background())
 
-	check(duckdb.RegisterTableUDF(conn, "udf", duckdb.UDFOptions{ProjectionPushdown: true}, newMyTableUDF()))
+	check(duckdb.RegisterTableUDF(conn, "siftlab", duckdb.UDFOptions{ProjectionPushdown: true}, newMyTableUDF()))
 	check(db.Ping())
+	t0 := time.Now()
+	defer func() {
+		fmt.Println(time.Since(t0))
+	}()
+	const q = `SELECT count(userId) FROM siftlab(10000000000, $str, $bbb)`
 
-	const q = `SELECT * FROM udf(10, $1, $2)`
-
-	rows, err := db.QueryContext(context.Background(), q, "123", true)
+	rows, err := db.QueryContext(context.Background(), q, sql.Named("str", "123"), sql.Named("bbb", true))
 	check(err)
 	defer rows.Close()
 

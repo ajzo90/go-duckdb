@@ -20,6 +20,7 @@ import "C"
 
 import (
 	"database/sql"
+	"fmt"
 	"reflect"
 	"sync"
 	"unsafe"
@@ -222,21 +223,21 @@ func acquireChunk(vecSize int, cols int, output C.duckdb_data_chunk) *DataChunk 
 		c.Columns = make([]Vector, cols)
 	}
 	c.Columns = c.Columns[:cols]
-	c.cscr = acquireCStr()
+	c.cstr = acquireCStr()
 	for i := range c.Columns {
-		c.Columns[i].init(vecSize, C.duckdb_data_chunk_get_vector(output, C.ulonglong(i)), c.cscr)
+		c.Columns[i].init(vecSize, C.duckdb_data_chunk_get_vector(output, C.ulonglong(i)), c.cstr)
 	}
 	return c
 }
 
 func releaseChunk(ch *DataChunk) {
-	releaseCStr(ch.cscr)
+	releaseCStr(ch.cstr)
 	chunkPool.Put(ch)
 }
 
 type DataChunk struct {
 	Columns []Vector
-	cscr    cstr
+	cstr    cstr
 }
 
 type Vector struct {
@@ -252,22 +253,37 @@ type Vector struct {
 }
 
 func (d *Vector) AppendInt64(v ...int64) {
+	if d == nil {
+		return
+	}
 	d.pos += copy(d.int64s[d.pos:], v)
 }
 
 func (d *Vector) AppendUInt64(v ...uint64) {
+	if d == nil {
+		return
+	}
 	d.pos += copy(d.uint64s[d.pos:], v)
 }
 
 func (d *Vector) AppendFloat64(v ...float64) {
+	if d == nil {
+		return
+	}
 	d.pos += copy(d.float64s[d.pos:], v)
 }
 
 func (d *Vector) AppendBool(v ...bool) {
+	if d == nil {
+		return
+	}
 	d.pos += copy(d.bools[d.pos:], v)
 }
 
 func (d *Vector) AppendBytes(v ...[]byte) {
+	if d == nil {
+		return
+	}
 	for _, v := range v {
 		d.cscr.buf = append(d.cscr.buf[:0], v...)
 		cstr := (*C.char)(unsafe.Pointer(&d.cscr.buf[0]))
@@ -276,8 +292,12 @@ func (d *Vector) AppendBytes(v ...[]byte) {
 	}
 }
 
-func (d *Vector) SetNull(idx int) {
-	C.duckdb_validity_set_row_invalid(d.bitmask, C.ulonglong(idx))
+func (d *Vector) AppendNull() {
+	if d == nil {
+		return
+	}
+	C.duckdb_validity_set_row_invalid(d.bitmask, C.ulonglong(d.pos))
+	d.pos++
 }
 
 func initVecSlice[T int64 | uint64 | float64 | bool](sl *[]T, ptr unsafe.Pointer, sz int) {
@@ -295,10 +315,7 @@ func (d *Vector) init(sz int, v C.duckdb_vector, scr cstr) {
 	initVecSlice(&d.bools, d.ptr, sz)
 
 	C.duckdb_vector_ensure_validity_writable(v)
-	C.duckdb_vector_ensure_validity_writable(v)
-	mask := C.duckdb_vector_get_validity(v)
-	d.bitmask = mask
-
+	d.bitmask = C.duckdb_vector_get_validity(v)
 }
 
 type cstr struct {
@@ -309,6 +326,8 @@ var cbufpool struct {
 	mtx    sync.Mutex
 	allocs []cstr
 }
+
+const mallocSize = 4096
 
 func acquireCStr() cstr {
 	var sl []byte
@@ -321,13 +340,16 @@ func acquireCStr() cstr {
 	b.mtx.Unlock()
 
 	if cap(sl) == 0 {
-		sl = (*[1 << 31]byte)(C.malloc(C.ulong(4096 * unsafe.Sizeof(byte(0)))))[:0:4096]
+		sl = (*[1 << 31]byte)(C.malloc(C.ulong(mallocSize * unsafe.Sizeof(byte(0)))))[:0:mallocSize]
 	}
 
 	return cstr{buf: sl}
 }
 
 func releaseCStr(b cstr) {
+	if cap(b.buf) > mallocSize {
+		panic(fmt.Sprintf("buffer too large %d > %d", cap(b.buf), mallocSize))
+	}
 	cbufpool.mtx.Lock()
 	defer cbufpool.mtx.Unlock()
 	cbufpool.allocs = append(cbufpool.allocs, b)
