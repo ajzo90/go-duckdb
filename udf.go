@@ -7,8 +7,10 @@ package duckdb
 void udf_bind(duckdb_bind_info info);
 
 void udf_init(duckdb_init_info info);
+void udf_init_cleanup(duckdb_init_info info);
 
 void udf_local_init(duckdb_init_info info);
+void udf_local_init_cleanup(duckdb_init_info info);
 
 void udf_callback(duckdb_function_info, duckdb_data_chunk);  // https://golang.org/issue/19837
 
@@ -42,10 +44,12 @@ type (
 	}
 	Scanner interface {
 		Scan(chunk *DataChunk) (int, error)
+		Close()
 	}
 	TableFunction interface {
 		GetArguments() []any
 		BindArguments(args ...any) (schema Ref)
+		DestroySchema(schema Ref)
 		GetSchema(schema Ref) *Schema
 		InitScanner(ref Ref, vecSize int) (scanner Ref)
 		GetScanner(scanner Ref) Scanner
@@ -100,28 +104,50 @@ func udf_bind(info C.duckdb_bind_info) {
 	C.duckdb_bind_set_bind_data(info, malloc(int(schemaRef)), C.duckdb_delete_callback_t(C.free))
 }
 
+//export udf_init_cleanup
+func udf_init_cleanup(info C.duckdb_init_info) {
+	refs := *(*[2]int)(info)
+	schemaRef, tblRef := refs[0], refs[1]
+	tfunc := tableFuncs[tblRef]
+	tfunc.DestroySchema(Ref(schemaRef))
+	C.free(unsafe.Pointer(info))
+	//log.Println("udf_init_cleanup", schemaRef, tblRef)
+}
+
 //export udf_init
 func udf_init(info C.duckdb_init_info) {
 	count := int(C.duckdb_init_get_column_count(info))
-	tfunc := tableFuncs[*(*int)(C.duckdb_init_get_extra_info(info))]
-	schema := tfunc.GetSchema(*(*Ref)(C.duckdb_init_get_bind_data(info)))
+	udfRef := *(*int)(C.duckdb_init_get_extra_info(info))
+	tfunc := tableFuncs[udfRef]
+	schemaRef := *(*Ref)(C.duckdb_init_get_bind_data(info))
+	schema := tfunc.GetSchema(schemaRef)
 	schema.Projection = make([]int, count)
 	for i := 0; i < count; i++ {
 		srcPos := int(C.duckdb_init_get_column_index(info, C.ulonglong(i)))
 		schema.Projection[i] = srcPos
 	}
 	C.duckdb_init_set_max_threads(info, C.ulonglong(schema.MaxThreads))
+	C.duckdb_init_set_init_data(info, malloc(int(schemaRef), int(udfRef)), C.duckdb_delete_callback_t(C.udf_init_cleanup))
 }
 
-var x int64
+//export udf_local_init_cleanup
+func udf_local_init_cleanup(info C.duckdb_init_info) {
+	refs := *(*[2]int)(info)
+	scanRef, tblRef := refs[0], refs[1]
+	tblFunc := tableFuncs[tblRef]
+	tblFunc.GetScanner(Ref(scanRef)).Close()
+	C.free(unsafe.Pointer(info))
+	//log.Println("udf_local_init_cleanup", scanRef, tblRef)
+}
 
 //export udf_local_init
 func udf_local_init(info C.duckdb_init_info) {
-	tfunc := tableFuncs[*(*int)(C.duckdb_init_get_extra_info(info))]
+	udfRef := *(*int)(C.duckdb_init_get_extra_info(info))
+	tfunc := tableFuncs[udfRef]
 	schema := *(*Ref)(C.duckdb_init_get_bind_data(info))
 	vecSize := int(C.duckdb_vector_size())
-	extra_info := malloc(int(tfunc.InitScanner(schema, vecSize)))
-	C.duckdb_init_set_init_data(info, extra_info, C.duckdb_delete_callback_t(C.free))
+	scanRef := int(tfunc.InitScanner(schema, vecSize))
+	C.duckdb_init_set_init_data(info, malloc(scanRef, udfRef), C.duckdb_delete_callback_t(C.udf_local_init_cleanup))
 }
 
 //export udf_callback

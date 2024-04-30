@@ -67,6 +67,13 @@ func (d *myTableUDF) BindArguments(args ...any) (schem duckdb.Ref) {
 	return ref
 }
 
+func (d *myTableUDF) DestroySchema(ref duckdb.Ref) {
+	d.mtx.Lock()
+	defer d.mtx.Unlock()
+
+	delete(d.schemas, ref)
+}
+
 func (d *myTableUDF) GetSchema(ref duckdb.Ref) *duckdb.Schema {
 	d.mtx.RLock()
 	defer d.mtx.RUnlock()
@@ -79,6 +86,10 @@ type udfScanner struct {
 	vecSize int
 	scr     []byte
 	fns     []func(vector *duckdb.Vector)
+}
+
+func (l *udfScanner) Close() {
+	log.Println("close scanner")
 }
 
 func (l *udfScanner) Scan(ch *duckdb.DataChunk) (int, error) {
