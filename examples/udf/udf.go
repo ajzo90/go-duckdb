@@ -81,7 +81,7 @@ type udfScanner struct {
 	fns     []func(vector *duckdb.Vector)
 }
 
-func (l *udfScanner) Scan(ch *duckdb.DataChunk) int {
+func (l *udfScanner) Scan(ch *duckdb.DataChunk) (int, error) {
 	rem := atomic.AddInt64(&l.schema.rows, -int64(l.vecSize))
 	if rem < 0 {
 		l.vecSize += int(rem)
@@ -94,7 +94,7 @@ func (l *udfScanner) Scan(ch *duckdb.DataChunk) int {
 		f(&ch.Columns[i])
 	}
 
-	return l.vecSize
+	return l.vecSize, nil
 }
 
 func (d *myTableUDF) GetScanner(ref duckdb.Ref) duckdb.Scanner {

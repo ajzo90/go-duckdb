@@ -41,7 +41,7 @@ type (
 		ExactCardinality bool
 	}
 	Scanner interface {
-		Scan(chunk *DataChunk) int
+		Scan(chunk *DataChunk) (int, error)
 	}
 	TableFunction interface {
 		GetArguments() []any
@@ -132,9 +132,15 @@ func udf_callback(info C.duckdb_function_info, output C.duckdb_data_chunk) {
 	colCount := int(C.duckdb_data_chunk_get_column_count(output))
 	local := *(*Ref)(C.duckdb_function_get_local_init_data(info))
 	ch := acquireChunk(vecSize, colCount, output)
-	size := tblFunc.GetScanner(local).Scan(ch)
+	size, err := tblFunc.GetScanner(local).Scan(ch)
 	releaseChunk(ch)
-	C.duckdb_data_chunk_set_size(output, C.ulonglong(size))
+	if err != nil {
+		errstr := C.CString(err.Error())
+		C.duckdb_function_set_error(info, errstr)
+		C.free(unsafe.Pointer(errstr))
+	} else {
+		C.duckdb_data_chunk_set_size(output, C.ulonglong(size))
+	}
 }
 
 type UDFOptions struct {
