@@ -20,7 +20,8 @@ import "C"
 
 import (
 	"database/sql"
-	"fmt"
+	"github.com/google/uuid"
+	"log"
 	"reflect"
 	"sync"
 	"unsafe"
@@ -176,8 +177,16 @@ func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableF
 
 func getDuckdbTypeFromValue(v any) (C.duckdb_type, error) {
 	switch v.(type) {
+	case uuid.UUID:
+		return C.DUCKDB_TYPE_UUID, nil
 	case int64:
 		return C.DUCKDB_TYPE_BIGINT, nil
+	case int32:
+		return C.DUCKDB_TYPE_INTEGER, nil
+	case uint8:
+		return C.DUCKDB_TYPE_UTINYINT, nil
+	case uint32:
+		return C.DUCKDB_TYPE_UINTEGER, nil
 	case string:
 		return C.DUCKDB_TYPE_VARCHAR, nil
 	case bool:
@@ -223,73 +232,127 @@ func acquireChunk(vecSize int, cols int, output C.duckdb_data_chunk) *DataChunk 
 		c.Columns = make([]Vector, cols)
 	}
 	c.Columns = c.Columns[:cols]
-	c.cstr = acquireCStr()
 	for i := range c.Columns {
-		c.Columns[i].init(vecSize, C.duckdb_data_chunk_get_vector(output, C.ulonglong(i)), c.cstr)
+		c.Columns[i].init(vecSize, C.duckdb_data_chunk_get_vector(output, C.ulonglong(i)))
 	}
 	return c
 }
 
 func releaseChunk(ch *DataChunk) {
-	releaseCStr(ch.cstr)
 	chunkPool.Put(ch)
 }
 
 type DataChunk struct {
 	Columns []Vector
-	cstr    cstr
 }
 
 type Vector struct {
 	vector   C.duckdb_vector
 	ptr      unsafe.Pointer
 	pos      int
-	int64s   []int64
 	uint64s  []uint64
+	uint32s  []uint32
+	uint16s  []uint16
+	uint8s   []uint8
 	float64s []float64
 	bools    []bool
-	cscr     cstr
+	uuids    [][16]uint8
 	bitmask  *C.uint64_t
 }
 
-func (d *Vector) AppendInt64(v ...int64) {
+func (d *Vector) AppendUInt64(v uint64) {
 	if d == nil {
 		return
 	}
-	d.pos += copy(d.int64s[d.pos:], v)
+	d.uint64s[d.pos] = v
+	d.pos++
 }
 
-func (d *Vector) AppendUInt64(v ...uint64) {
-	if d == nil {
-		return
-	}
-	d.pos += copy(d.uint64s[d.pos:], v)
+func AppendUint32(vec *Vector, v float64) {
+	vec.AppendUInt32(uint32(v))
 }
 
-func (d *Vector) AppendFloat64(v ...float64) {
-	if d == nil {
-		return
-	}
-	d.pos += copy(d.float64s[d.pos:], v)
+func AppendFloat64(vec *Vector, v float64) {
+	vec.AppendFloat64(v)
 }
 
-func (d *Vector) AppendBool(v ...bool) {
-	if d == nil {
-		return
-	}
-	d.pos += copy(d.bools[d.pos:], v)
+func AppendBytes(vec *Vector, v []byte) {
+	vec.AppendBytes(v)
 }
 
-func (d *Vector) AppendBytes(v ...[]byte) {
+func AppendUUID(vec *Vector, v []byte) {
+	if vec == nil {
+		return
+	}
+	copy(vec.uuids[vec.pos][:], v)
+	vec.pos++
+}
+
+func (d *Vector) AppendUInt32(v uint32) {
 	if d == nil {
 		return
 	}
-	for _, v := range v {
-		d.cscr.buf = append(d.cscr.buf[:0], v...)
-		cstr := (*C.char)(unsafe.Pointer(&d.cscr.buf[0]))
-		C.duckdb_vector_assign_string_element_len(d.vector, C.ulonglong(d.pos), cstr, C.idx_t(len(v)))
+	d.uint32s[d.pos] = v
+	d.pos++
+}
+
+func (d *Vector) AppendUInt16(v uint16) {
+	if d == nil {
+		return
+	}
+	d.uint16s[d.pos] = v
+	d.pos++
+}
+
+func (d *Vector) GetSize() int {
+	return d.pos
+}
+
+func (d *Vector) SetSize(n int) {
+	if d == nil {
+		return
+	}
+	if d.pos > n {
+		log.Println("HMMM", d.pos, n)
+		panic(1111)
+	}
+	for d.pos < n {
+		C.duckdb_validity_set_row_invalid(d.bitmask, C.ulonglong(d.pos))
 		d.pos++
 	}
+}
+
+func (d *Vector) AppendUInt8(v uint8) {
+	if d == nil {
+		return
+	}
+	d.uint8s[d.pos] = v
+	d.pos++
+}
+
+func (d *Vector) AppendFloat64(v float64) {
+	if d == nil {
+		return
+	}
+	d.float64s[d.pos] = v
+	d.pos++
+}
+
+func (d *Vector) AppendBool(v bool) {
+	if d == nil {
+		return
+	}
+	d.bools[d.pos] = v
+	d.pos++
+}
+
+func (d *Vector) AppendBytes(v []byte) {
+	if d == nil {
+		return
+	}
+	cstr := (*C.char)(unsafe.Pointer(&v[0]))
+	C.duckdb_vector_assign_string_element_len(d.vector, C.ulonglong(d.pos), cstr, C.idx_t(len(v)))
+	d.pos++
 }
 
 func (d *Vector) AppendNull() {
@@ -300,59 +363,24 @@ func (d *Vector) AppendNull() {
 	d.pos++
 }
 
-func initVecSlice[T int64 | uint64 | float64 | bool](sl *[]T, ptr unsafe.Pointer, sz int) {
+func initVecSlice[T uint64 | uint32 | uint16 | uint8 | float64 | float32 | bool | [16]uint8](sl *[]T, ptr unsafe.Pointer, sz int) {
 	*sl = (*[1 << 31]T)(ptr)[:sz]
 }
 
-func (d *Vector) init(sz int, v C.duckdb_vector, scr cstr) {
+func (d *Vector) init(sz int, v C.duckdb_vector) {
 	d.pos = 0
 	d.vector = v
 	d.ptr = C.duckdb_vector_get_data(v)
-	d.cscr = scr
 	initVecSlice(&d.uint64s, d.ptr, sz)
-	initVecSlice(&d.int64s, d.ptr, sz)
+	initVecSlice(&d.uint32s, d.ptr, sz)
+	initVecSlice(&d.uint16s, d.ptr, sz)
+	initVecSlice(&d.uint8s, d.ptr, sz)
 	initVecSlice(&d.float64s, d.ptr, sz)
 	initVecSlice(&d.bools, d.ptr, sz)
+	initVecSlice(&d.uuids, d.ptr, sz)
 
 	C.duckdb_vector_ensure_validity_writable(v)
 	d.bitmask = C.duckdb_vector_get_validity(v)
-}
-
-type cstr struct {
-	buf []byte
-}
-
-var cbufpool struct {
-	mtx    sync.Mutex
-	allocs []cstr
-}
-
-const mallocSize = 4096
-
-func acquireCStr() cstr {
-	var sl []byte
-	b := &cbufpool
-	b.mtx.Lock()
-	if len(b.allocs) > 0 {
-		sl = b.allocs[len(b.allocs)-1].buf[:0]
-		b.allocs = b.allocs[:len(b.allocs)-1]
-	}
-	b.mtx.Unlock()
-
-	if cap(sl) == 0 {
-		sl = (*[1 << 31]byte)(C.malloc(C.ulong(mallocSize * unsafe.Sizeof(byte(0)))))[:0:mallocSize]
-	}
-
-	return cstr{buf: sl}
-}
-
-func releaseCStr(b cstr) {
-	if cap(b.buf) > mallocSize {
-		panic(fmt.Sprintf("buffer too large %d > %d", cap(b.buf), mallocSize))
-	}
-	cbufpool.mtx.Lock()
-	defer cbufpool.mtx.Unlock()
-	cbufpool.allocs = append(cbufpool.allocs, b)
 }
 
 func malloc(v ...int) unsafe.Pointer {

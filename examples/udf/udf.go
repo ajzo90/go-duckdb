@@ -119,7 +119,7 @@ func (d *myTableUDF) InitScanner(parent duckdb.Ref, vecSize int) (scanner duckdb
 		case 0:
 			fn = func(vec *duckdb.Vector) {
 				for i := 0; i < s.vecSize; i++ {
-					vec.AppendInt64(int64(i % 10))
+					vec.AppendUInt64(uint64(i % 10))
 				}
 			}
 		case 1:
