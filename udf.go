@@ -297,7 +297,7 @@ type Vector struct {
 	uint8s   []uint8
 	float64s []float64
 	bools    []bool
-	uuids    [][16]uint8
+	uuids    []C.duckdb_hugeint
 	bitmask  *C.uint64_t
 }
 
@@ -325,7 +325,7 @@ func AppendUUID(vec *Vector, v []byte) {
 	if vec == nil {
 		return
 	}
-	copy(vec.uuids[vec.pos][:], v)
+	vec.uuids[vec.pos] = uuidToHugeInt(UUID(v))
 	vec.pos++
 }
 
@@ -408,7 +408,7 @@ func (d *Vector) AppendNull() {
 	d.pos++
 }
 
-func initVecSlice[T uint64 | uint32 | uint16 | uint8 | float64 | float32 | bool | [16]uint8](sl *[]T, ptr unsafe.Pointer, sz int) {
+func initVecSlice[T uint64 | uint32 | uint16 | uint8 | float64 | float32 | bool | [16]uint8 | C.duckdb_hugeint](sl *[]T, ptr unsafe.Pointer, sz int) {
 	*sl = (*[1 << 31]T)(ptr)[:sz]
 }
 
