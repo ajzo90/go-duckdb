@@ -23,7 +23,6 @@ import "C"
 import (
 	"database/sql"
 	"github.com/google/uuid"
-	"log"
 	"reflect"
 	"sync"
 	"unsafe"
@@ -49,8 +48,8 @@ type (
 	TableFunction interface {
 		GetArguments() []any
 		BindArguments(args ...any) (schema Ref)
-		DestroySchema(schema Ref)
 		GetSchema(schema Ref) *Schema
+		DestroySchema(schema Ref)
 		InitScanner(ref Ref, vecSize int) (scanner Ref)
 		GetScanner(scanner Ref) Scanner
 	}
@@ -211,20 +210,30 @@ func getDuckdbTypeFromValue(v any) (C.duckdb_type, error) {
 	switch v.(type) {
 	case uuid.UUID:
 		return C.DUCKDB_TYPE_UUID, nil
-	case int64:
-		return C.DUCKDB_TYPE_BIGINT, nil
+	case uint64:
+		return C.DUCKDB_TYPE_UBIGINT, nil
 	case int32:
 		return C.DUCKDB_TYPE_INTEGER, nil
-	case uint8:
-		return C.DUCKDB_TYPE_UTINYINT, nil
+	case int16:
+		return C.DUCKDB_TYPE_SMALLINT, nil
+	case int8:
+		return C.DUCKDB_TYPE_TINYINT, nil
+	case int64:
+		return C.DUCKDB_TYPE_BIGINT, nil
 	case uint32:
 		return C.DUCKDB_TYPE_UINTEGER, nil
+	case uint16:
+		return C.DUCKDB_TYPE_USMALLINT, nil
+	case uint8:
+		return C.DUCKDB_TYPE_UTINYINT, nil
 	case string:
 		return C.DUCKDB_TYPE_VARCHAR, nil
 	case bool:
 		return C.DUCKDB_TYPE_BOOLEAN, nil
 	case float64:
 		return C.DUCKDB_TYPE_DOUBLE, nil
+	case float32:
+		return C.DUCKDB_TYPE_FLOAT, nil
 	default:
 		return C.DUCKDB_TYPE_INVALID, unsupportedTypeError(reflect.TypeOf(v).String())
 	}
@@ -320,6 +329,14 @@ func AppendUUID(vec *Vector, v []byte) {
 	vec.pos++
 }
 
+func RawCopy(vec *Vector, v []byte) {
+	if vec == nil {
+		return
+	}
+	copy((*[1 << 31]byte)(vec.ptr)[:], v)
+	vec.pos += len(v) / 16
+}
+
 func (d *Vector) AppendUInt32(v uint32) {
 	if d == nil {
 		return
@@ -343,10 +360,6 @@ func (d *Vector) GetSize() int {
 func (d *Vector) SetSize(n int) {
 	if d == nil {
 		return
-	}
-	if d.pos > n {
-		log.Println("HMMM", d.pos, n)
-		panic(1111)
 	}
 	for d.pos < n {
 		C.duckdb_validity_set_row_invalid(d.bitmask, C.ulonglong(d.pos))
