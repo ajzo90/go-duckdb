@@ -22,6 +22,7 @@ import "C"
 
 import (
 	"database/sql"
+	"github.com/cespare/xxhash"
 	"github.com/google/uuid"
 	"reflect"
 	"sync"
@@ -87,20 +88,58 @@ func udf_bind(info C.duckdb_bind_info) {
 
 	schemaRef := tfunc.BindArguments(args...)
 	schema := tfunc.GetSchema(schemaRef)
-	for _, v := range schema.Columns {
-		t, err := getDuckdbTypeFromValue(v.V)
-		if err != nil {
-			udf_bind_error(info, err)
-			return
-		}
 
-		colName := C.CString(v.Name)
-		C.duckdb_bind_add_result_column(info, colName, C.duckdb_create_logical_type(t))
+	var addCol = func(name string, typ C.duckdb_logical_type) {
+		colName := C.CString(name)
+		C.duckdb_bind_add_result_column(info, colName, typ)
 		C.free(unsafe.Pointer(colName))
+	}
+
+	for _, v := range schema.Columns {
+		if enum, ok := v.V.(*Enum); ok {
+			names := enum.Names()
+
+			//names = slices.Clone(names)
+			//sort.Strings(names)
+
+			var ptrs = make([]unsafe.Pointer, len(names))
+			var alloc []byte
+			var offsets = make([]int, 0, len(names))
+			for i := range names {
+				offsets = append(offsets, len(alloc))
+				alloc = append(alloc, names[i]...)
+				alloc = append(alloc, 0) // null-termination
+			}
+
+			colName := unsafe.Pointer(C.CBytes(alloc))
+			for i := range offsets {
+				ptrs[i] = unsafe.Add(colName, offsets[i])
+			}
+			p := (**C.char)(malloc2(ptrs...))
+			typ := C.duckdb_create_enum_type(p, C.idx_t(len(ptrs)))
+			addCol(v.Name, typ)
+			C.free(colName)
+			C.free(unsafe.Pointer(p))
+		} else {
+			typ, err := getDuckdbTypeFromValue(v.V)
+			if err != nil {
+				udf_bind_error(info, err)
+				return
+			}
+			addCol(v.Name, C.duckdb_create_logical_type(typ))
+		}
 	}
 
 	C.duckdb_bind_set_cardinality(info, C.ulonglong(schema.Cardinality), C.bool(schema.ExactCardinality))
 	C.duckdb_bind_set_bind_data(info, malloc(int(schemaRef)), C.duckdb_delete_callback_t(C.free))
+}
+
+func malloc2(strs ...unsafe.Pointer) unsafe.Pointer {
+	x := C.malloc(C.ulong(len(strs)) * C.ulong(8))
+	for i, v := range strs {
+		(*[1 << 31]unsafe.Pointer)(x)[i] = v
+	}
+	return x
 }
 
 //export udf_init_cleanup
@@ -204,6 +243,51 @@ func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableF
 		}
 		return nil
 	})
+}
+
+type Enum struct {
+	values []string
+	m      map[uint64]uint32
+	mtx    sync.RWMutex
+}
+
+func NewEnum() *Enum {
+	return &Enum{
+		values: make([]string, 0, 1024),
+		m:      make(map[uint64]uint32),
+	}
+}
+
+func (enum *Enum) Names() []string {
+	enum.mtx.RLock()
+	defer enum.mtx.RUnlock()
+	return enum.values
+}
+
+func (enum *Enum) add(x uint64, s []byte) uint32 {
+	enum.mtx.Lock()
+	defer enum.mtx.Unlock()
+
+	if id, ok := enum.m[x]; ok {
+		return id
+	}
+
+	id := uint32(len(enum.values))
+	v := string(s)
+	enum.values = append(enum.values, v)
+	enum.m[x] = id
+	return id
+}
+
+func (enum *Enum) Register(b []byte) uint32 {
+	x := xxhash.Sum64(b)
+	enum.mtx.RLock()
+	id, ok := enum.m[x]
+	enum.mtx.RUnlock()
+	if ok {
+		return id
+	}
+	return enum.add(x, b)
 }
 
 func getDuckdbTypeFromValue(v any) (C.duckdb_type, error) {
