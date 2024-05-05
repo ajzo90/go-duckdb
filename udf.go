@@ -96,12 +96,16 @@ func udf_bind(info C.duckdb_bind_info) {
 	}
 
 	for _, v := range schema.Columns {
-		if enum, ok := v.V.(*Enum); ok {
+		if _, ok := v.V.([]string); ok {
+			typ, err := getDuckdbTypeFromValue("")
+			if err != nil {
+				udf_bind_error(info, err)
+				return
+			}
+			listTyp := C.duckdb_create_list_type(C.duckdb_create_logical_type(typ))
+			addCol(v.Name, listTyp)
+		} else if enum, ok := v.V.(*Enum); ok {
 			names := enum.Names()
-
-			//names = slices.Clone(names)
-			//sort.Strings(names)
-
 			var ptrs = make([]unsafe.Pointer, len(names))
 			var alloc []byte
 			var offsets = make([]int, 0, len(names))
@@ -364,6 +368,12 @@ func acquireChunk(vecSize int, cols int, output C.duckdb_data_chunk) *DataChunk 
 }
 
 func releaseChunk(ch *DataChunk) {
+	for i := range ch.Columns {
+		if ch.Columns[i].childVec != nil {
+			releaseVector(ch.Columns[i].childVec)
+			ch.Columns[i].childVec = nil
+		}
+	}
 	chunkPool.Put(ch)
 }
 
@@ -372,17 +382,19 @@ type DataChunk struct {
 }
 
 type Vector struct {
-	vector   C.duckdb_vector
-	ptr      unsafe.Pointer
-	pos      int
-	uint64s  []uint64
-	uint32s  []uint32
-	uint16s  []uint16
-	uint8s   []uint8
-	float64s []float64
-	bools    []bool
-	uuids    []C.duckdb_hugeint
-	bitmask  *C.uint64_t
+	vector      C.duckdb_vector
+	ptr         unsafe.Pointer
+	childVec    *Vector
+	pos         int
+	uint64s     []uint64
+	uint32s     []uint32
+	uint16s     []uint16
+	uint8s      []uint8
+	float64s    []float64
+	bools       []bool
+	uuids       []C.duckdb_hugeint
+	listEntries []C.duckdb_list_entry
+	bitmask     *C.uint64_t
 }
 
 func (d *Vector) AppendUInt64(v uint64) {
@@ -391,6 +403,42 @@ func (d *Vector) AppendUInt64(v uint64) {
 	}
 	d.uint64s[d.pos] = v
 	d.pos++
+}
+
+func (d *Vector) ReserveListSize(newLength int) {
+	C.duckdb_list_vector_set_size(d.vector, C.idx_t(newLength))
+	C.duckdb_list_vector_reserve(d.vector, C.idx_t(newLength))
+}
+
+func (d *Vector) AppendListEntry(n int) {
+	d.listEntries[d.pos] = C.duckdb_list_entry{
+		offset: C.idx_t(d.childVec.pos),
+		length: C.idx_t(n),
+	}
+	d.pos++
+	d.ReserveListSize(d.childVec.pos + n) // todo: call this only once for [][]T or []T
+}
+
+func (d *Vector) Child() *Vector {
+	return d.childVec
+}
+
+// for reference
+func (d *Vector) AppendStringList(v [][]byte) {
+	d.AppendListEntry(len(v))
+	for _, v := range v {
+		d.childVec.appendBytes(v)
+	}
+}
+
+// for reference
+func (d *Vector) AppendStringLists(v [][][]byte) {
+	for _, v := range v {
+		d.AppendListEntry(len(v))
+		for _, v := range v {
+			d.childVec.appendBytes(v)
+		}
+	}
 }
 
 func AppendUint32(vec *Vector, v float64) {
@@ -475,13 +523,17 @@ func (d *Vector) AppendBool(v bool) {
 	d.pos++
 }
 
+func (d *Vector) appendBytes(v []byte) {
+	cstr := (*C.char)(unsafe.Pointer(&v[0]))
+	C.duckdb_vector_assign_string_element_len(d.vector, C.ulonglong(d.pos), cstr, C.idx_t(len(v)))
+	d.pos++
+}
+
 func (d *Vector) AppendBytes(v []byte) {
 	if d == nil {
 		return
 	}
-	cstr := (*C.char)(unsafe.Pointer(&v[0]))
-	C.duckdb_vector_assign_string_element_len(d.vector, C.ulonglong(d.pos), cstr, C.idx_t(len(v)))
-	d.pos++
+	d.appendBytes(v)
 }
 
 func (d *Vector) AppendNull() {
@@ -492,11 +544,13 @@ func (d *Vector) AppendNull() {
 	d.pos++
 }
 
-func initVecSlice[T uint64 | uint32 | uint16 | uint8 | float64 | float32 | bool | [16]uint8 | C.duckdb_hugeint](sl *[]T, ptr unsafe.Pointer, sz int) {
+func initVecSlice[T uint64 | uint32 | uint16 | uint8 | float64 | float32 | bool | [16]uint8 | C.duckdb_hugeint | C.duckdb_list_entry](sl *[]T, ptr unsafe.Pointer, sz int) {
 	*sl = (*[1 << 31]T)(ptr)[:sz]
 }
 
 func (d *Vector) init(sz int, v C.duckdb_vector) {
+	logicalType := C.duckdb_vector_get_column_type(v)
+	duckdbType := C.duckdb_get_type_id(logicalType)
 	d.pos = 0
 	d.vector = v
 	d.ptr = C.duckdb_vector_get_data(v)
@@ -507,9 +561,28 @@ func (d *Vector) init(sz int, v C.duckdb_vector) {
 	initVecSlice(&d.float64s, d.ptr, sz)
 	initVecSlice(&d.bools, d.ptr, sz)
 	initVecSlice(&d.uuids, d.ptr, sz)
+	initVecSlice(&d.listEntries, d.ptr, sz)
 
 	C.duckdb_vector_ensure_validity_writable(v)
 	d.bitmask = C.duckdb_vector_get_validity(v)
+
+	if duckdbType == C.DUCKDB_TYPE_LIST {
+		d.childVec = acquireVector()
+		d.childVec.init(sz, C.duckdb_list_vector_get_child(d.vector))
+	}
+}
+
+func acquireVector() *Vector {
+	return vectorPool.Get().(*Vector)
+}
+func releaseVector(v *Vector) {
+	vectorPool.Put(v)
+}
+
+var vectorPool = sync.Pool{
+	New: func() any {
+		return &Vector{}
+	},
 }
 
 func malloc(v ...int) unsafe.Pointer {
