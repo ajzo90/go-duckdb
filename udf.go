@@ -5,18 +5,16 @@ package duckdb
 #include <duckdb.h>
 
 void udf_bind(duckdb_bind_info info);
-
 void udf_init(duckdb_init_info info);
 void udf_init_cleanup(duckdb_init_info info);
-
 void udf_local_init(duckdb_init_info info);
 void udf_local_init_cleanup(duckdb_init_info info);
-
 void udf_callback(duckdb_function_info, duckdb_data_chunk);  // https://golang.org/issue/19837
 
 typedef void (*init)(duckdb_function_info);  // https://golang.org/issue/19835
 typedef void (*bind)(duckdb_function_info);  // https://golang.org/issue/19835
 typedef void (*callback)(duckdb_function_info, duckdb_data_chunk);  // https://golang.org/issue/19835
+
 */
 import "C"
 
@@ -93,11 +91,20 @@ func udf_bind(info C.duckdb_bind_info) {
 		colName := C.CString(name)
 		C.duckdb_bind_add_result_column(info, colName, typ)
 		C.free(unsafe.Pointer(colName))
+		C.free(unsafe.Pointer(typ))
 	}
 
 	for _, v := range schema.Columns {
 		if _, ok := v.V.([]string); ok {
 			typ, err := getDuckdbTypeFromValue("")
+			if err != nil {
+				udf_bind_error(info, err)
+				return
+			}
+			listTyp := C.duckdb_create_list_type(C.duckdb_create_logical_type(typ))
+			addCol(v.Name, listTyp)
+		} else if _, ok := v.V.([]uint32); ok {
+			typ, err := getDuckdbTypeFromValue(uint32(0))
 			if err != nil {
 				udf_bind_error(info, err)
 				return
@@ -398,9 +405,6 @@ type Vector struct {
 }
 
 func (d *Vector) AppendUInt64(v uint64) {
-	if d == nil {
-		return
-	}
 	d.uint64s[d.pos] = v
 	d.pos++
 }
@@ -416,37 +420,10 @@ func (d *Vector) AppendListEntry(n int) {
 		length: C.idx_t(n),
 	}
 	d.pos++
-	d.ReserveListSize(d.childVec.pos + n) // todo: call this only once for [][]T or []T
 }
 
 func (d *Vector) Child() *Vector {
 	return d.childVec
-}
-
-// for reference
-func (d *Vector) AppendStringList(v [][]byte) {
-	d.AppendListEntry(len(v))
-	for _, v := range v {
-		d.childVec.appendBytes(v)
-	}
-}
-
-// for reference
-func (d *Vector) AppendStringLists(v [][][]byte) {
-	for _, v := range v {
-		d.AppendListEntry(len(v))
-		for _, v := range v {
-			d.childVec.appendBytes(v)
-		}
-	}
-}
-
-func AppendUint32(vec *Vector, v float64) {
-	vec.AppendUInt32(uint32(v))
-}
-
-func AppendFloat64(vec *Vector, v float64) {
-	vec.AppendFloat64(v)
 }
 
 func AppendBytes(vec *Vector, v []byte) {
@@ -454,33 +431,20 @@ func AppendBytes(vec *Vector, v []byte) {
 }
 
 func AppendUUID(vec *Vector, v []byte) {
-	if vec == nil {
-		return
-	}
 	vec.uuids[vec.pos] = uuidToHugeInt(UUID(v))
 	vec.pos++
 }
 
-func RawCopy(vec *Vector, v []byte) {
-	if vec == nil {
-		return
-	}
-	copy((*[1 << 31]byte)(vec.ptr)[:], v)
-	vec.pos += len(v) / 16
+func RawCopy[T any](vec *Vector, v []T) {
+	copy((*[1 << 31]T)(vec.ptr)[:], v)
 }
 
 func (d *Vector) AppendUInt32(v uint32) {
-	if d == nil {
-		return
-	}
 	d.uint32s[d.pos] = v
 	d.pos++
 }
 
 func (d *Vector) AppendUInt16(v uint16) {
-	if d == nil {
-		return
-	}
 	d.uint16s[d.pos] = v
 	d.pos++
 }
@@ -490,56 +454,46 @@ func (d *Vector) GetSize() int {
 }
 
 func (d *Vector) SetSize(n int) {
-	if d == nil {
-		return
-	}
 	for d.pos < n {
-		C.duckdb_validity_set_row_invalid(d.bitmask, C.ulonglong(d.pos))
-		d.pos++
+		d.AppendNull()
 	}
 }
 
 func (d *Vector) AppendUInt8(v uint8) {
-	if d == nil {
-		return
-	}
 	d.uint8s[d.pos] = v
 	d.pos++
 }
 
 func (d *Vector) AppendFloat64(v float64) {
-	if d == nil {
-		return
-	}
 	d.float64s[d.pos] = v
 	d.pos++
 }
 
 func (d *Vector) AppendBool(v bool) {
-	if d == nil {
-		return
-	}
 	d.bools[d.pos] = v
 	d.pos++
 }
 
+var emptyString = []byte(" ")
+
 func (d *Vector) appendBytes(v []byte) {
+	sz := len(v)
+	if sz == 0 {
+		v = emptyString
+	}
 	cstr := (*C.char)(unsafe.Pointer(&v[0]))
-	C.duckdb_vector_assign_string_element_len(d.vector, C.ulonglong(d.pos), cstr, C.idx_t(len(v)))
+	C.duckdb_vector_assign_string_element_len(d.vector, C.ulonglong(d.pos), cstr, C.idx_t(sz))
 	d.pos++
 }
 
 func (d *Vector) AppendBytes(v []byte) {
-	if d == nil {
-		return
-	}
 	d.appendBytes(v)
+}
+func (d *Vector) Size() int {
+	return d.pos
 }
 
 func (d *Vector) AppendNull() {
-	if d == nil {
-		return
-	}
 	C.duckdb_validity_set_row_invalid(d.bitmask, C.ulonglong(d.pos))
 	d.pos++
 }
@@ -551,25 +505,27 @@ func initVecSlice[T uint64 | uint32 | uint16 | uint8 | float64 | float32 | bool 
 func (d *Vector) init(sz int, v C.duckdb_vector) {
 	logicalType := C.duckdb_vector_get_column_type(v)
 	duckdbType := C.duckdb_get_type_id(logicalType)
+	C.duckdb_destroy_logical_type(&logicalType)
 	d.pos = 0
 	d.vector = v
 	d.ptr = C.duckdb_vector_get_data(v)
-	initVecSlice(&d.uint64s, d.ptr, sz)
-	initVecSlice(&d.uint32s, d.ptr, sz)
-	initVecSlice(&d.uint16s, d.ptr, sz)
-	initVecSlice(&d.uint8s, d.ptr, sz)
-	initVecSlice(&d.float64s, d.ptr, sz)
-	initVecSlice(&d.bools, d.ptr, sz)
-	initVecSlice(&d.uuids, d.ptr, sz)
-	initVecSlice(&d.listEntries, d.ptr, sz)
-
-	C.duckdb_vector_ensure_validity_writable(v)
-	d.bitmask = C.duckdb_vector_get_validity(v)
 
 	if duckdbType == C.DUCKDB_TYPE_LIST {
+		initVecSlice(&d.listEntries, d.ptr, sz)
 		d.childVec = acquireVector()
 		d.childVec.init(sz, C.duckdb_list_vector_get_child(d.vector))
+	} else {
+		initVecSlice(&d.uint64s, d.ptr, sz)
+		initVecSlice(&d.uint32s, d.ptr, sz)
+		initVecSlice(&d.uint16s, d.ptr, sz)
+		initVecSlice(&d.uint8s, d.ptr, sz)
+		initVecSlice(&d.float64s, d.ptr, sz)
+		initVecSlice(&d.bools, d.ptr, sz)
+		initVecSlice(&d.uuids, d.ptr, sz)
+		C.duckdb_vector_ensure_validity_writable(v)
+		d.bitmask = C.duckdb_vector_get_validity(v)
 	}
+
 }
 
 func acquireVector() *Vector {
