@@ -34,6 +34,7 @@ type (
 		V    any
 	}
 	Schema struct {
+		Name             string
 		Columns          []ColumnDef
 		Projection       []int
 		MaxThreads       int
@@ -46,7 +47,7 @@ type (
 	}
 	TableFunction interface {
 		GetArguments() []any
-		BindArguments(args ...any) (schema Ref)
+		BindArguments(args ...any) (schema Ref, err error)
 		GetSchema(schema Ref) *Schema
 		DestroySchema(schema Ref)
 		InitScanner(ref Ref, vecSize int) (scanner Ref)
@@ -84,7 +85,11 @@ func udf_bind(info C.duckdb_bind_info) {
 		args = append(args, arg)
 	}
 
-	schemaRef := tfunc.BindArguments(args...)
+	schemaRef, err := tfunc.BindArguments(args...)
+	if err != nil {
+		udf_bind_error(info, err)
+		return
+	}
 	schema := tfunc.GetSchema(schemaRef)
 
 	var addCol = func(name string, typ C.duckdb_logical_type) {
