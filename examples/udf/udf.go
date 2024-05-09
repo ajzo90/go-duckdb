@@ -13,7 +13,7 @@ import (
 )
 
 type schema struct {
-	schema *duckdb.Schema
+	schema *duckdb.Table
 	rows   int64
 	strVal string
 	bVal   bool
@@ -41,7 +41,7 @@ func (d *myTableUDF) GetArguments() []any {
 	}
 }
 
-func (d *myTableUDF) BindArguments(args ...any) (schem duckdb.Ref) {
+func (d *myTableUDF) BindArguments(args ...any) (schem duckdb.Ref, err error) {
 	var rows = args[0].(int64)
 	var strVal = args[1].(string)
 	var bVal = args[2].(bool)
@@ -49,7 +49,7 @@ func (d *myTableUDF) BindArguments(args ...any) (schem duckdb.Ref) {
 		rows:   rows,
 		strVal: strVal,
 		bVal:   bVal,
-		schema: &duckdb.Schema{
+		schema: &duckdb.Table{
 			Columns: []duckdb.ColumnDef{
 				{"userId", int64(0)},
 				{"xxx", strVal},
@@ -64,17 +64,17 @@ func (d *myTableUDF) BindArguments(args ...any) (schem duckdb.Ref) {
 
 	ref := duckdb.Ref(len(d.schemas))
 	d.schemas[ref] = schema
-	return ref
+	return ref, nil
 }
 
-func (d *myTableUDF) DestroySchema(ref duckdb.Ref) {
+func (d *myTableUDF) DestroyTable(ref duckdb.Ref) {
 	d.mtx.Lock()
 	defer d.mtx.Unlock()
 
 	delete(d.schemas, ref)
 }
 
-func (d *myTableUDF) GetSchema(ref duckdb.Ref) *duckdb.Schema {
+func (d *myTableUDF) GetTable(ref duckdb.Ref) *duckdb.Table {
 	d.mtx.RLock()
 	defer d.mtx.RUnlock()
 

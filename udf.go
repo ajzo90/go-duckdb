@@ -34,7 +34,7 @@ type (
 		Name string
 		V    any
 	}
-	Schema struct {
+	Table struct {
 		Name             string
 		Columns          []ColumnDef
 		Projection       []int
@@ -48,9 +48,9 @@ type (
 	}
 	TableFunction interface {
 		GetArguments() []any
-		BindArguments(args ...any) (schema Ref, err error)
-		GetSchema(schema Ref) *Schema
-		DestroySchema(schema Ref)
+		BindArguments(args ...any) (table Ref, err error)
+		GetTable(table Ref) *Table
+		DestroyTable(table Ref)
 		InitScanner(ref Ref, vecSize int) (scanner Ref)
 		GetScanner(scanner Ref) Scanner
 	}
@@ -86,12 +86,12 @@ func udf_bind(info C.duckdb_bind_info) {
 		args = append(args, arg)
 	}
 
-	schemaRef, err := tfunc.BindArguments(args...)
+	tableRef, err := tfunc.BindArguments(args...)
 	if err != nil {
 		udf_bind_error(info, err)
 		return
 	}
-	schema := tfunc.GetSchema(schemaRef)
+	table := tfunc.GetTable(tableRef)
 
 	var addCol = func(name string, typ C.duckdb_logical_type) {
 		colName := C.CString(name)
@@ -100,7 +100,7 @@ func udf_bind(info C.duckdb_bind_info) {
 		C.free(unsafe.Pointer(typ))
 	}
 
-	for _, v := range schema.Columns {
+	for _, v := range table.Columns {
 		if _, ok := v.V.([]string); ok {
 			typ, err := getDuckdbTypeFromValue("")
 			if err != nil {
@@ -147,8 +147,8 @@ func udf_bind(info C.duckdb_bind_info) {
 		}
 	}
 
-	C.duckdb_bind_set_cardinality(info, C.ulonglong(schema.Cardinality), C.bool(schema.ExactCardinality))
-	C.duckdb_bind_set_bind_data(info, malloc(int(schemaRef)), C.duckdb_delete_callback_t(C.free))
+	C.duckdb_bind_set_cardinality(info, C.ulonglong(table.Cardinality), C.bool(table.ExactCardinality))
+	C.duckdb_bind_set_bind_data(info, malloc(int(tableRef)), C.duckdb_delete_callback_t(C.free))
 }
 
 func malloc2(strs ...unsafe.Pointer) unsafe.Pointer {
@@ -162,11 +162,11 @@ func malloc2(strs ...unsafe.Pointer) unsafe.Pointer {
 //export udf_init_cleanup
 func udf_init_cleanup(info C.duckdb_init_info) {
 	refs := *(*[2]int)(info)
-	schemaRef, tblRef := refs[0], refs[1]
+	tableRef, tblRef := refs[0], refs[1]
 	tfunc := tableFuncs[tblRef]
-	tfunc.DestroySchema(Ref(schemaRef))
+	tfunc.DestroyTable(Ref(tableRef))
 	C.free(unsafe.Pointer(info))
-	//log.Println("udf_init_cleanup", schemaRef, tblRef)
+	//log.Println("udf_init_cleanup", tableRef, tblRef)
 }
 
 //export udf_init
@@ -174,15 +174,15 @@ func udf_init(info C.duckdb_init_info) {
 	count := int(C.duckdb_init_get_column_count(info))
 	udfRef := *(*int)(C.duckdb_init_get_extra_info(info))
 	tfunc := tableFuncs[udfRef]
-	schemaRef := *(*Ref)(C.duckdb_init_get_bind_data(info))
-	schema := tfunc.GetSchema(schemaRef)
-	schema.Projection = make([]int, count)
+	tableRef := *(*Ref)(C.duckdb_init_get_bind_data(info))
+	table := tfunc.GetTable(tableRef)
+	table.Projection = make([]int, count)
 	for i := 0; i < count; i++ {
 		srcPos := int(C.duckdb_init_get_column_index(info, C.ulonglong(i)))
-		schema.Projection[i] = srcPos
+		table.Projection[i] = srcPos
 	}
-	C.duckdb_init_set_max_threads(info, C.ulonglong(schema.MaxThreads))
-	C.duckdb_init_set_init_data(info, malloc(int(schemaRef), int(udfRef)), C.duckdb_delete_callback_t(C.udf_init_cleanup))
+	C.duckdb_init_set_max_threads(info, C.ulonglong(table.MaxThreads))
+	C.duckdb_init_set_init_data(info, malloc(int(tableRef), int(udfRef)), C.duckdb_delete_callback_t(C.udf_init_cleanup))
 }
 
 //export udf_local_init_cleanup
@@ -199,9 +199,9 @@ func udf_local_init_cleanup(info C.duckdb_init_info) {
 func udf_local_init(info C.duckdb_init_info) {
 	udfRef := *(*int)(C.duckdb_init_get_extra_info(info))
 	tfunc := tableFuncs[udfRef]
-	schema := *(*Ref)(C.duckdb_init_get_bind_data(info))
+	table := *(*Ref)(C.duckdb_init_get_bind_data(info))
 	vecSize := int(C.duckdb_vector_size())
-	scanRef := int(tfunc.InitScanner(schema, vecSize))
+	scanRef := int(tfunc.InitScanner(table, vecSize))
 	C.duckdb_init_set_init_data(info, malloc(scanRef, udfRef), C.duckdb_delete_callback_t(C.udf_local_init_cleanup))
 }
 
