@@ -20,6 +20,7 @@ import "C"
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"github.com/cespare/xxhash"
 	"github.com/google/uuid"
 	"reflect"
@@ -228,37 +229,45 @@ type UDFOptions struct {
 }
 
 func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableFunction) error {
-	return c.Raw(func(dconn any) error {
-		duckConn := dconn.(*conn)
-		name := C.CString(name)
-		defer C.free(unsafe.Pointer(name))
-
-		extra_info := malloc(len(tableFuncs))
-		tableFuncs = append(tableFuncs, function)
-
-		tableFunction := C.duckdb_create_table_function()
-		C.duckdb_table_function_set_name(tableFunction, name)
-		C.duckdb_table_function_set_bind(tableFunction, C.bind(C.udf_bind))
-		C.duckdb_table_function_set_init(tableFunction, C.init(C.udf_init))
-		C.duckdb_table_function_set_local_init(tableFunction, C.init(C.udf_local_init))
-		C.duckdb_table_function_set_function(tableFunction, C.callback(C.udf_callback))
-		C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(opts.ProjectionPushdown))
-		C.duckdb_table_function_set_extra_info(tableFunction, extra_info, C.duckdb_delete_callback_t(C.free))
-
-		for _, v := range function.GetArguments() {
-			argtype, err := getDuckdbTypeFromValue(v)
-			if err != nil {
-				return err
-			}
-			C.duckdb_table_function_add_parameter(tableFunction, C.duckdb_create_logical_type(argtype))
+	return c.Raw(func(driverConn any) error {
+		conn, ok := driverConn.(driver.Conn)
+		if !ok {
+			return driver.ErrBadConn
 		}
-
-		state := C.duckdb_register_table_function(duckConn.duckdbCon, tableFunction)
-		if state != 0 {
-			return invalidTableFunctionError()
-		}
-		return nil
+		return RegisterTableUDFConn(conn, name, opts, function)
 	})
+}
+
+func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function TableFunction) error {
+	duckConn := c.(*conn)
+	name := C.CString(_name)
+	defer C.free(unsafe.Pointer(name))
+
+	extra_info := malloc(len(tableFuncs))
+	tableFuncs = append(tableFuncs, function)
+
+	tableFunction := C.duckdb_create_table_function()
+	C.duckdb_table_function_set_name(tableFunction, name)
+	C.duckdb_table_function_set_bind(tableFunction, C.bind(C.udf_bind))
+	C.duckdb_table_function_set_init(tableFunction, C.init(C.udf_init))
+	C.duckdb_table_function_set_local_init(tableFunction, C.init(C.udf_local_init))
+	C.duckdb_table_function_set_function(tableFunction, C.callback(C.udf_callback))
+	C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(opts.ProjectionPushdown))
+	C.duckdb_table_function_set_extra_info(tableFunction, extra_info, C.duckdb_delete_callback_t(C.free))
+
+	for _, v := range function.GetArguments() {
+		argtype, err := getDuckdbTypeFromValue(v)
+		if err != nil {
+			return err
+		}
+		C.duckdb_table_function_add_parameter(tableFunction, C.duckdb_create_logical_type(argtype))
+	}
+
+	state := C.duckdb_register_table_function(duckConn.duckdbCon, tableFunction)
+	if state != 0 {
+		return invalidTableFunctionError()
+	}
+	return nil
 }
 
 type Enum struct {
