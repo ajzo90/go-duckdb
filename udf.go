@@ -76,7 +76,7 @@ func udf_bind(info C.duckdb_bind_info) {
 			udf_bind_error(info, err)
 			return
 		}
-		value := C.duckdb_bind_get_parameter(info, C.ulonglong(i))
+		value := C.duckdb_bind_get_parameter(info, C.ulong(i))
 		arg, err := getValue(typ, value)
 		C.duckdb_destroy_value(&value)
 		if err != nil {
@@ -147,7 +147,7 @@ func udf_bind(info C.duckdb_bind_info) {
 		}
 	}
 
-	C.duckdb_bind_set_cardinality(info, C.ulonglong(table.Cardinality), C.bool(table.ExactCardinality))
+	C.duckdb_bind_set_cardinality(info, C.ulong(table.Cardinality), C.bool(table.ExactCardinality))
 	C.duckdb_bind_set_bind_data(info, malloc(int(tableRef)), C.duckdb_delete_callback_t(C.free))
 }
 
@@ -178,10 +178,10 @@ func udf_init(info C.duckdb_init_info) {
 	table := tfunc.GetTable(tableRef)
 	table.Projection = make([]int, count)
 	for i := 0; i < count; i++ {
-		srcPos := int(C.duckdb_init_get_column_index(info, C.ulonglong(i)))
+		srcPos := int(C.duckdb_init_get_column_index(info, C.ulong(i)))
 		table.Projection[i] = srcPos
 	}
-	C.duckdb_init_set_max_threads(info, C.ulonglong(table.MaxThreads))
+	C.duckdb_init_set_max_threads(info, C.ulong(table.MaxThreads))
 	C.duckdb_init_set_init_data(info, malloc(int(tableRef), int(udfRef)), C.duckdb_delete_callback_t(C.udf_init_cleanup))
 }
 
@@ -220,7 +220,7 @@ func udf_callback(info C.duckdb_function_info, output C.duckdb_data_chunk) {
 		C.duckdb_function_set_error(info, errstr)
 		C.free(unsafe.Pointer(errstr))
 	} else {
-		C.duckdb_data_chunk_set_size(output, C.ulonglong(size))
+		C.duckdb_data_chunk_set_size(output, C.ulong(size))
 	}
 }
 
@@ -383,7 +383,7 @@ func acquireChunk(vecSize int, cols int, output C.duckdb_data_chunk) *DataChunk 
 	}
 	c.Columns = c.Columns[:cols]
 	for i := range c.Columns {
-		c.Columns[i].init(vecSize, C.duckdb_data_chunk_get_vector(output, C.ulonglong(i)))
+		c.Columns[i].init(vecSize, C.duckdb_data_chunk_get_vector(output, C.ulong(i)))
 	}
 	return c
 }
@@ -496,7 +496,7 @@ func (d *Vector) appendBytes(v []byte) {
 		v = emptyString
 	}
 	cstr := (*C.char)(unsafe.Pointer(&v[0]))
-	C.duckdb_vector_assign_string_element_len(d.vector, C.ulonglong(d.pos), cstr, C.idx_t(sz))
+	C.duckdb_vector_assign_string_element_len(d.vector, C.ulong(d.pos), cstr, C.idx_t(sz))
 	d.pos++
 }
 
@@ -508,7 +508,7 @@ func (d *Vector) Size() int {
 }
 
 func (d *Vector) AppendNull() {
-	C.duckdb_validity_set_row_invalid(d.bitmask, C.ulonglong(d.pos))
+	C.duckdb_validity_set_row_invalid(d.bitmask, C.ulong(d.pos))
 	d.pos++
 }
 
