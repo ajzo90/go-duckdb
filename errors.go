@@ -29,6 +29,10 @@ func columnError(err error, colIdx int) error {
 	return fmt.Errorf("%w: %s: %d", err, columnErrMsg, colIdx)
 }
 
+func columnCountError(actual int, expected int) error {
+	return fmt.Errorf("%s: expected %d, got %d", columnCountErrMsg, expected, actual)
+}
+
 func unsupportedTypeError(name string) error {
 	return fmt.Errorf("%s: %s", unsupportedTypeErrMsg, name)
 }
@@ -41,18 +45,19 @@ func invalidatedAppenderError(err error) error {
 }
 
 func invalidTableFunctionError() error {
-	return fmt.Errorf(invalidTampleFunctionMsg)
+	return fmt.Errorf(invalidTableFunctionMsg)
 }
 
 const (
-	driverErrMsg             = "database/sql/driver"
-	duckdbErrMsg             = "duckdb error"
-	castErrMsg               = "cast error"
-	structFieldErrMsg        = "invalid STRUCT field"
-	columnErrMsg             = "column index"
-	unsupportedTypeErrMsg    = "unsupported data type"
-	invalidatedAppenderMsg   = "appended data has been invalidated due to corrupt row"
-	invalidTampleFunctionMsg = "table function was rejected by duckdb for unknown reason"
+	driverErrMsg            = "database/sql/driver"
+	duckdbErrMsg            = "duckdb error"
+	castErrMsg              = "cast error"
+	structFieldErrMsg       = "invalid STRUCT field"
+	columnErrMsg            = "column index"
+	unsupportedTypeErrMsg   = "unsupported data type"
+	invalidatedAppenderMsg  = "appended data has been invalidated due to corrupt row"
+	columnCountErrMsg       = "invalid column count"
+	invalidTableFunctionMsg = "table function was rejected by duckdb for unknown reason"
 )
 
 var (
@@ -68,8 +73,10 @@ var (
 	errAppenderDoubleClose      = errors.New("could not close appender: already closed")
 	errAppenderAppendRow        = errors.New("could not append row")
 	errAppenderAppendAfterClose = errors.New("could not append row: appender already closed")
-	errAppenderClose            = errors.New("could not close appender")
-	errAppenderFlush            = errors.New("could not flush appender")
+	// FIXME: not covered by tests. Should be triggered by appending a constraint violation, see #210.
+	errAppenderClose = errors.New("could not close appender")
+	// FIXME: not covered by tests. Should be triggered by appending a constraint violation, see #210.
+	errAppenderFlush = errors.New("could not flush appender")
 
 	// Errors not covered in tests.
 	errConnect      = errors.New("could not connect to database")
