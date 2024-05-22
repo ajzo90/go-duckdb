@@ -21,8 +21,10 @@ import "C"
 import (
 	"database/sql"
 	"database/sql/driver"
+	"encoding/binary"
 	"github.com/cespare/xxhash"
 	"github.com/google/uuid"
+	"log"
 	"reflect"
 	"sync"
 	"unsafe"
@@ -85,13 +87,18 @@ func udf_bind(info C.duckdb_bind_info) {
 		}
 		args = append(args, arg)
 	}
-
 	tableRef, err := tfunc.BindArguments(args...)
 	if err != nil {
 		udf_bind_error(info, err)
 		return
 	}
 	table := tfunc.GetTable(tableRef)
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Println(r, "PANIC")
+		}
+	}()
 
 	var addCol = func(name string, typ C.duckdb_logical_type) {
 		colName := C.CString(name)
@@ -119,7 +126,7 @@ func udf_bind(info C.duckdb_bind_info) {
 			addCol(v.Name, listTyp)
 		} else if enum, ok := v.V.(*Enum); ok {
 			names := enum.Names()
-			var ptrs = make([]unsafe.Pointer, len(names))
+
 			var alloc []byte
 			var offsets = make([]int, 0, len(names))
 			for i := range names {
@@ -127,8 +134,13 @@ func udf_bind(info C.duckdb_bind_info) {
 				alloc = append(alloc, names[i]...)
 				alloc = append(alloc, 0) // null-termination
 			}
+			if len(names) == 0 {
+				offsets = append(offsets, len(alloc))
+				alloc = append(alloc, 0) // null-termination
+			}
 
 			colName := unsafe.Pointer(C.CBytes(alloc))
+			var ptrs = make([]unsafe.Pointer, len(offsets))
 			for i := range offsets {
 				ptrs[i] = unsafe.Add(colName, offsets[i])
 			}
@@ -274,6 +286,28 @@ type Enum struct {
 	values []string
 	m      map[uint64]uint32
 	mtx    sync.RWMutex
+}
+
+func (e *Enum) Serialize(b []byte) []byte {
+	for _, v := range e.values {
+		b = binary.AppendUvarint(b, uint64(len(v)))
+		b = append(b, v...)
+	}
+	return b
+}
+
+func DeserializeEnum(b []byte) *Enum {
+	e := NewEnum()
+	for len(b) > 0 {
+		sz, n := binary.Uvarint(b)
+		if n <= 0 {
+			panic("invalid uvarint")
+		}
+		b = b[n:]
+		e.Register(b[:sz])
+		b = b[sz:]
+	}
+	return e
 }
 
 func NewEnum() *Enum {

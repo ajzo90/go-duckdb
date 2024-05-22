@@ -301,7 +301,7 @@ func getGen2[T any](typ C.duckdb_type, n int, vector C.duckdb_vector) ([]T, erro
 	case typ:
 		return getVec[T](vector)[:n], nil
 	default:
-		return nil, fmt.Errorf("invalid %v %v", typ, resTyp)
+		return nil, fmt.Errorf("invalid typ in getGen2 %v %v", typ, resTyp)
 	}
 }
 
