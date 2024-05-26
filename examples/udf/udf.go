@@ -7,7 +7,6 @@ import (
 	"github.com/marcboeker/go-duckdb"
 	"log"
 	"reflect"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -21,30 +20,35 @@ type schema struct {
 }
 
 type myTableUDF struct {
-	schemas     map[duckdb.Ref]*schema
-	localStates map[duckdb.Ref]*udfScanner
-	mtx         sync.RWMutex
 }
 
 func newMyTableUDF() *myTableUDF {
-	return &myTableUDF{
-		schemas:     map[duckdb.Ref]*schema{},
-		localStates: map[duckdb.Ref]*udfScanner{},
+	return &myTableUDF{}
+}
+
+func (d *myTableUDF) NamedArguments() map[string]any {
+	return map[string]any{
+		"str": "",
 	}
 }
 
-func (d *myTableUDF) GetArguments() []any {
+func (d *myTableUDF) Arguments() []any {
 	return []any{
 		int64(0),
-		any(""),
+		"",
 		true,
 	}
 }
 
-func (d *myTableUDF) BindArguments(args ...any) (schem duckdb.Ref, err error) {
+func (d *myTableUDF) BindArguments(namedArgs map[string]any, args []any) (b duckdb.Binding, err error) {
 	var rows = args[0].(int64)
 	var strVal = args[1].(string)
 	var bVal = args[2].(bool)
+
+	for k, v := range namedArgs {
+		fmt.Println(k, v)
+	}
+
 	schema := &schema{
 		rows:   rows,
 		strVal: strVal,
@@ -59,26 +63,8 @@ func (d *myTableUDF) BindArguments(args ...any) (schem duckdb.Ref, err error) {
 			MaxThreads:  12,
 		},
 	}
-	d.mtx.Lock()
-	defer d.mtx.Unlock()
 
-	ref := duckdb.Ref(len(d.schemas))
-	d.schemas[ref] = schema
-	return ref, nil
-}
-
-func (d *myTableUDF) DestroyTable(ref duckdb.Ref) {
-	d.mtx.Lock()
-	defer d.mtx.Unlock()
-
-	delete(d.schemas, ref)
-}
-
-func (d *myTableUDF) GetTable(ref duckdb.Ref) *duckdb.Table {
-	d.mtx.RLock()
-	defer d.mtx.RUnlock()
-
-	return d.schemas[ref].schema
+	return schema, nil
 }
 
 type udfScanner struct {
@@ -108,16 +94,12 @@ func (l *udfScanner) Scan(ch *duckdb.DataChunk) (int, error) {
 	return l.vecSize, nil
 }
 
-func (d *myTableUDF) GetScanner(ref duckdb.Ref) duckdb.Scanner {
-	d.mtx.RLock()
-	defer d.mtx.RUnlock()
-
-	return d.localStates[ref]
+func (schema *schema) Table() *duckdb.Table {
+	return schema.schema
 }
 
-func (d *myTableUDF) InitScanner(parent duckdb.Ref, vecSize int) (scanner duckdb.Ref) {
+func (schema *schema) InitScanner(vecSize int) (scanner duckdb.Scanner) {
 
-	schema := d.schemas[parent]
 	s := &udfScanner{
 		schema:  schema,
 		vecSize: vecSize,
@@ -165,12 +147,7 @@ func (d *myTableUDF) InitScanner(parent duckdb.Ref, vecSize int) (scanner duckdb
 		s.fns = append(s.fns, fn)
 	}
 
-	d.mtx.Lock()
-	defer d.mtx.Unlock()
-
-	ref := duckdb.Ref(len(d.localStates))
-	d.localStates[ref] = s
-	return ref
+	return s
 }
 
 func main() {
@@ -181,13 +158,13 @@ func main() {
 	defer db.Close()
 	conn, _ := db.Conn(context.Background())
 
-	check(duckdb.RegisterTableUDF(conn, "siftlab", duckdb.UDFOptions{ProjectionPushdown: true}, newMyTableUDF()))
+	check(duckdb.RegisterTableUDF(conn, "range2", duckdb.UDFOptions{ProjectionPushdown: true}, newMyTableUDF()))
 	check(db.Ping())
 	t0 := time.Now()
 	defer func() {
 		fmt.Println(time.Since(t0))
 	}()
-	const q = `SELECT count(userId) FROM siftlab(10000000000, $str, $bbb)`
+	const q = `SELECT count(userId) FROM range2(100000000, $str, $bbb)`
 
 	rows, err := db.QueryContext(context.Background(), q, sql.Named("str", "123"), sql.Named("bbb", true))
 	check(err)
