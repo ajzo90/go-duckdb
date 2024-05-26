@@ -496,8 +496,8 @@ var emptyString = []byte(" ")
 func (d *Vector) appendBytes(v []byte) {
 	sz := len(v)
 	if sz == 0 {
-		panic("fix empty string handling")
 		v = emptyString
+		panic("fix empty string handling")
 	}
 	cstr := (*C.char)(unsafe.Pointer(&v[0]))
 	C.duckdb_vector_assign_string_element_len(d.vector, C.uint64_t(d.pos), cstr, C.idx_t(sz))
