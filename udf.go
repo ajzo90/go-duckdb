@@ -491,12 +491,12 @@ func (d *Vector) AppendBool(v bool) {
 	d.pos++
 }
 
-var emptyString = []byte(" ")
+//var emptyString = []byte(" ")
 
 func (d *Vector) appendBytes(v []byte) {
 	sz := len(v)
 	if sz == 0 {
-		v = emptyString
+		//v = emptyString
 		panic("fix empty string handling")
 	}
 	cstr := (*C.char)(unsafe.Pointer(&v[0]))
