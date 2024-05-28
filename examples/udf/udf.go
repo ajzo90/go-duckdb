@@ -40,7 +40,7 @@ func (d *myTableUDF) Arguments() []any {
 	}
 }
 
-func (d *myTableUDF) BindArguments(namedArgs map[string]any, args []any) (b duckdb.Binding, err error) {
+func (d *myTableUDF) Bind(namedArgs map[string]any, args []any) (b duckdb.Binding, err error) {
 	var rows = args[0].(int64)
 	var strVal = args[1].(string)
 	var bVal = args[2].(bool)
@@ -164,9 +164,9 @@ func main() {
 	defer func() {
 		fmt.Println(time.Since(t0))
 	}()
-	const q = `SELECT count(userId) FROM range2(100000000, $str, $bbb)`
+	const q = `SELECT count(userId) FROM range2(100000000, $str, $bbb) where userId=$user`
 
-	rows, err := db.QueryContext(context.Background(), q, sql.Named("str", "123"), sql.Named("bbb", true))
+	rows, err := db.QueryContext(context.Background(), q, sql.Named("str", "123"), sql.Named("bbb", true), sql.Named("user", 1))
 	check(err)
 	defer rows.Close()
 
@@ -197,7 +197,7 @@ func main() {
 	}
 }
 
-func check(args ...interface{}) {
+func check(args ...any) {
 	err := args[len(args)-1]
 	if err != nil {
 		panic(err)

@@ -367,6 +367,12 @@ var timeConverter = map[C.duckdb_type]func(int64) time.Time{
 	C.DUCKDB_TYPE_TIME: func(i int64) time.Time {
 		return time.UnixMicro(i).UTC()
 	},
+	C.DUCKDB_TYPE_TIME_TZ: func(i int64) time.Time {
+		panic("not implemented")
+	},
+	C.DUCKDB_TYPE_TIMESTAMP_TZ: func(micros int64) time.Time {
+		return time.UnixMicro(micros).UTC()
+	},
 	C.DUCKDB_TYPE_TIMESTAMP: func(micros int64) time.Time {
 		return time.UnixMicro(micros).UTC()
 	},

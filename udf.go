@@ -22,7 +22,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"github.com/google/uuid"
-	"log"
 	"reflect"
 	"runtime/cgo"
 	"sync"
@@ -53,44 +52,43 @@ type (
 	TableFunction interface {
 		Arguments() []any
 		NamedArguments() map[string]any
-		BindArguments(namedArgs map[string]any, args []any) (table Binding, err error)
+		Bind(named map[string]any, args []any) (Binding, error)
 	}
 )
 
-func udf_bind_error(info C.duckdb_bind_info, err error) {
-	errstr := C.CString(err.Error())
-	C.duckdb_bind_set_error(info, errstr)
-	C.free(unsafe.Pointer(errstr))
-}
-
 //export udf_bind
 func udf_bind(info C.duckdb_bind_info) {
-	extra_info := C.duckdb_bind_get_extra_info(info)
-	h := cgo.Handle(extra_info)
-	tfunc := h.Value().(TableFunction)
+	if err := _udf_bind(info); err != nil {
+		errstr := C.CString(err.Error())
+		C.duckdb_bind_set_error(info, errstr)
+		C.free(unsafe.Pointer(errstr))
+	}
+}
+
+func _udf_bind(info C.duckdb_bind_info) error {
+	h := cgo.Handle(C.duckdb_bind_get_extra_info(info))
+	tblFunc := h.Value().(TableFunction)
 
 	var args []any
-	for i, v := range tfunc.Arguments() {
+	for i, v := range tblFunc.Arguments() {
 		typ, err := getDuckdbTypeFromValue(v)
 		if err != nil {
-			udf_bind_error(info, err)
-			return
+			return err
 		}
 		value := C.duckdb_bind_get_parameter(info, C.uint64_t(i))
 		arg, err := getBindValue(typ, value)
 		C.duckdb_destroy_value(&value)
 		if err != nil {
-			udf_bind_error(info, err)
-			return
+			return err
 		}
 		args = append(args, arg)
 	}
+
 	namedArgs := make(map[string]any)
-	for name, v := range tfunc.NamedArguments() {
+	for name, v := range tblFunc.NamedArguments() {
 		typ, err := getDuckdbTypeFromValue(v)
 		if err != nil {
-			udf_bind_error(info, err)
-			return
+			return err
 		}
 		argName := C.CString(name)
 		value := C.duckdb_bind_get_named_parameter(info, argName)
@@ -98,24 +96,16 @@ func udf_bind(info C.duckdb_bind_info) {
 		arg, err := getBindValue(typ, value)
 		C.duckdb_destroy_value(&value)
 		if err != nil {
-			udf_bind_error(info, err)
-			return
+			return err
 		}
 		namedArgs[name] = arg
 	}
 
-	bind, err := tfunc.BindArguments(namedArgs, args)
+	bind, err := tblFunc.Bind(namedArgs, args)
 	if err != nil {
-		udf_bind_error(info, err)
-		return
+		return err
 	}
 	table := bind.Table()
-
-	defer func() {
-		if r := recover(); r != nil {
-			log.Println(r, "PANIC")
-		}
-	}()
 
 	var addCol = func(name string, typ C.duckdb_logical_type) {
 		colName := C.CString(name)
@@ -128,16 +118,14 @@ func udf_bind(info C.duckdb_bind_info) {
 		if _, ok := v.V.([]string); ok {
 			typ, err := getDuckdbTypeFromValue("")
 			if err != nil {
-				udf_bind_error(info, err)
-				return
+				return err
 			}
 			listTyp := C.duckdb_create_list_type(C.duckdb_create_logical_type(typ))
 			addCol(v.Name, listTyp)
 		} else if _, ok := v.V.([]uint32); ok {
 			typ, err := getDuckdbTypeFromValue(uint32(0))
 			if err != nil {
-				udf_bind_error(info, err)
-				return
+				return err
 			}
 			listTyp := C.duckdb_create_list_type(C.duckdb_create_logical_type(typ))
 			addCol(v.Name, listTyp)
@@ -161,7 +149,7 @@ func udf_bind(info C.duckdb_bind_info) {
 			for i := range offsets {
 				ptrs[i] = unsafe.Add(colName, offsets[i])
 			}
-			p := (**C.char)(malloc2(ptrs...))
+			p := (**C.char)(malloc(ptrs...))
 			typ := C.duckdb_create_enum_type(p, C.idx_t(len(ptrs)))
 			addCol(v.Name, typ)
 			C.free(colName)
@@ -169,8 +157,7 @@ func udf_bind(info C.duckdb_bind_info) {
 		} else {
 			typ, err := getDuckdbTypeFromValue(v.V)
 			if err != nil {
-				udf_bind_error(info, err)
-				return
+				return err
 			}
 			addCol(v.Name, C.duckdb_create_logical_type(typ))
 		}
@@ -180,6 +167,7 @@ func udf_bind(info C.duckdb_bind_info) {
 
 	C.duckdb_bind_set_cardinality(info, C.uint64_t(table.Cardinality), C.bool(table.ExactCardinality))
 	C.duckdb_bind_set_bind_data(info, unsafe.Pointer(handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
+	return nil
 }
 
 //export udf_destroy_data
@@ -188,7 +176,7 @@ func udf_destroy_data(data unsafe.Pointer) {
 	h.Delete()
 }
 
-func malloc2(strs ...unsafe.Pointer) unsafe.Pointer {
+func malloc(strs ...unsafe.Pointer) unsafe.Pointer {
 	x := C.malloc(C.size_t(len(strs)) * C.size_t(8))
 	for i, v := range strs {
 		(*[1 << 31]unsafe.Pointer)(x)[i] = v
@@ -236,11 +224,9 @@ func udf_local_init(info C.duckdb_init_info) {
 //export udf_callback
 func udf_callback(info C.duckdb_function_info, output C.duckdb_data_chunk) {
 	vecSize := int(C.duckdb_vector_size())
-	colCount := int(C.duckdb_data_chunk_get_column_count(output))
-
 	scanner := getScanner(info).Value().(Scanner)
 
-	ch := acquireChunk(vecSize, colCount, output)
+	ch := acquireChunk(vecSize, output)
 	size, err := scanner.Scan(ch)
 	releaseChunk(ch)
 	if err != nil {
@@ -304,7 +290,6 @@ func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function
 		C.duckdb_destroy_logical_type(&lt)
 		C.free(unsafe.Pointer(argName))
 	}
-
 	state := C.duckdb_register_table_function(duckConn.duckdbCon, tableFunction)
 	if state != 0 {
 		return invalidTableFunctionError()
@@ -379,7 +364,8 @@ var chunkPool = sync.Pool{
 	},
 }
 
-func acquireChunk(vecSize int, cols int, output C.duckdb_data_chunk) *DataChunk {
+func acquireChunk(vecSize int, output C.duckdb_data_chunk) *DataChunk {
+	cols := int(C.duckdb_data_chunk_get_column_count(output))
 	c := chunkPool.Get().(*DataChunk)
 	if cap(c.Columns) < cols {
 		c.Columns = make([]Vector, cols)
