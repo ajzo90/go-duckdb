@@ -371,6 +371,7 @@ func acquireChunk(vecSize int, output C.duckdb_data_chunk) *DataChunk {
 		c.Columns = make([]Vector, cols)
 	}
 	c.Columns = c.Columns[:cols]
+	c.Capacity = vecSize
 	for i := range c.Columns {
 		c.Columns[i].init(vecSize, C.duckdb_data_chunk_get_vector(output, C.uint64_t(i)))
 	}
@@ -388,7 +389,8 @@ func releaseChunk(ch *DataChunk) {
 }
 
 type DataChunk struct {
-	Columns []Vector
+	Columns  []Vector
+	Capacity int
 }
 
 type Vector struct {
@@ -481,12 +483,12 @@ func (d *Vector) AppendBool(v bool) {
 
 func (d *Vector) appendBytes(v []byte) {
 	sz := len(v)
-	if sz == 0 {
-		//v = emptyString
-		panic("fix empty string handling")
+	if sz > 0 {
+		cstr := (*C.char)(unsafe.Pointer(&v[0]))
+		C.duckdb_vector_assign_string_element_len(d.vector, C.uint64_t(d.pos), cstr, C.idx_t(sz))
+	} else {
+		C.duckdb_vector_assign_string_element_len(d.vector, C.uint64_t(d.pos), nil, C.idx_t(0))
 	}
-	cstr := (*C.char)(unsafe.Pointer(&v[0]))
-	C.duckdb_vector_assign_string_element_len(d.vector, C.uint64_t(d.pos), cstr, C.idx_t(sz))
 	d.pos++
 }
 
