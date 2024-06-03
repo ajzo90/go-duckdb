@@ -22,16 +22,14 @@ SELECT * FROM cities`
 	stmt := Must(conn.Prepare(q))
 	defer stmt.Close()
 
-	rows := Must(stmt.(driver.StmtQueryContext).QueryContext(context.Background(), []driver.NamedValue{}))
+	rows := Must(stmt.(driver.StmtQueryContext).QueryContext(context.Background(), []driver.NamedValue{})).(duckdb.VecScanner)
 	defer rows.Close()
 
-	vecScanner := rows.(duckdb.VecScanner)
-
 	var ch duckdb.Chunk
-	defer ch.Destroy()
+	defer ch.Close()
 
 	for {
-		if err := vecScanner.NextChunk(&ch); err == io.EOF {
+		if err := rows.NextChunk(&ch); err == io.EOF {
 			break
 		} else if err != nil {
 			panic(err)

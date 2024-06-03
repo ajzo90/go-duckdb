@@ -9,12 +9,17 @@ import (
 	"fmt"
 	"io"
 	"math/bits"
+	"reflect"
 	"time"
 	"unsafe"
 )
 
 type VecScanner interface {
 	NextChunk(*Chunk) error
+	Columns() []string
+	Close() error
+	ColumnTypeScanType(index int) reflect.Type
+	ColumnTypeDatabaseTypeName(index int) string
 }
 
 var _ VecScanner = &rows{}
@@ -28,7 +33,7 @@ func (r *rows) NextChunk(c *Chunk) error {
 
 	c.chunk = C.duckdb_stream_fetch_chunk(r.res)
 	if c.chunk == nil {
-		c.Destroy()
+		c.Close()
 		return io.EOF
 	}
 	return nil
@@ -129,7 +134,7 @@ func (ch *Chunk) Date(colIdx int) ([]Date, error) {
 	return genericGet[C.duckdb_date](C.DUCKDB_TYPE_DATE, ch, colIdx)
 }
 
-func (ch *Chunk) Destroy() {
+func (ch *Chunk) Close() {
 	C.duckdb_destroy_data_chunk(&ch.chunk)
 	ch.chunk = nil
 }
