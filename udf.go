@@ -153,7 +153,7 @@ func _udf_bind(info C.duckdb_bind_info) error {
 			typ := C.duckdb_create_enum_type(p, C.idx_t(len(ptrs)))
 			addCol(v.Name, typ)
 			C.free(colName)
-			C.free(unsafe.Pointer(p))
+			C.duckdb_free(unsafe.Pointer(p))
 		} else {
 			typ, err := getDuckdbTypeFromValue(v.V)
 			if err != nil {
@@ -177,7 +177,7 @@ func udf_destroy_data(data unsafe.Pointer) {
 }
 
 func malloc(strs ...unsafe.Pointer) unsafe.Pointer {
-	x := C.malloc(C.size_t(len(strs)) * C.size_t(8))
+	x := C.duckdb_malloc(C.size_t(len(strs)) * C.size_t(8))
 	for i, v := range strs {
 		(*[1 << 31]unsafe.Pointer)(x)[i] = v
 	}
