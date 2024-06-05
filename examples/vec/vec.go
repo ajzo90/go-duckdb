@@ -12,17 +12,17 @@ func main() {
 	connector := Must(duckdb.NewConnector("", nil))
 	defer connector.Close()
 
-	conn := Must(connector.Connect(context.Background()))
+	conn := Must(connector.ConnectRaw(context.Background()))
 	defer conn.Close()
 
 	q := `
 WITH cities(Name, Id) AS (VALUES ('Amsterdam', 1), ('London', 2))
-SELECT * FROM cities`
+SELECT *, version() FROM cities`
 
-	stmt := Must(conn.Prepare(q))
+	stmt := Must(conn.PrepareContext(context.Background(), q))
 	defer stmt.Close()
 
-	rows := Must(stmt.(driver.StmtQueryContext).QueryContext(context.Background(), []driver.NamedValue{})).(duckdb.VecScanner)
+	rows := Must(stmt.QueryContext(context.Background(), []driver.NamedValue{}))
 	defer rows.Close()
 
 	var ch duckdb.Chunk
@@ -34,13 +34,14 @@ SELECT * FROM cities`
 		} else if err != nil {
 			panic(err)
 		}
-		names := Must(ch.String(0))
-		ids := Must(ch.Int32(1))
-
-		for _, name := range names {
-			fmt.Println(string(name.String()))
+		for _, v := range Must(ch.String(0)) {
+			fmt.Println(string(v.String()))
 		}
-		fmt.Println(ids)
+		fmt.Println(Must(ch.Int32(1)))
+		for _, v := range Must(ch.String(2)) {
+			fmt.Println(string(v.String()))
+		}
+
 	}
 
 }

@@ -253,7 +253,10 @@ func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableF
 }
 
 func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function TableFunction) error {
-	duckConn := c.(*conn)
+	duckConn, err := getConn(c)
+	if err != nil {
+		return err
+	}
 	name := C.CString(_name)
 	defer C.free(unsafe.Pointer(name))
 

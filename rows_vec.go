@@ -9,25 +9,12 @@ import (
 	"fmt"
 	"io"
 	"math/bits"
-	"reflect"
 	"time"
 	"unsafe"
 )
 
-type VecScanner interface {
-	NextChunk(*Chunk) error
-	Columns() []string
-	Close() error
-	ColumnTypeScanType(index int) reflect.Type
-	ColumnTypeDatabaseTypeName(index int) string
-}
-
-var _ VecScanner = &rows{}
-
-type RowsImpl = rows
-
 func (r *rows) NextChunk(c *Chunk) error {
-	C.duckdb_destroy_data_chunk(&c.chunk)
+	c.Close()
 	r.mtx.Lock()
 	defer r.mtx.Unlock()
 
@@ -48,7 +35,7 @@ func List[T validTypes](ch *Chunk, colIdx int) (*ListType[T], error) {
 	childVector := C.duckdb_list_vector_get_child(vector)
 	entries := castVec[duckdb_list_entry_t](vector)[:ch.NumValues()]
 
-	elements, err := _genericGet[T](DuckdbType[T](), 1<<31, childVector)
+	elements, err := getVector[T](DuckdbType[T](), 1<<31, childVector)
 	if err != nil {
 		return nil, err
 	}
@@ -196,15 +183,15 @@ func (ch *Chunk) UUID(colIdx int) ([]UUIDInternal, error) {
 
 func genericGet[T validTypes](typ C.duckdb_type, ch *Chunk, colIdx int) ([]T, error) {
 	vector := C.duckdb_data_chunk_get_vector(ch.chunk, C.idx_t(colIdx))
-	return _genericGet[T](typ, ch.NumValues(), vector)
+	return getVector[T](typ, ch.NumValues(), vector)
 }
 
 func GetVector[T validTypes](ch *Chunk, colIdx int) ([]T, error) {
 	vector := C.duckdb_data_chunk_get_vector(ch.chunk, C.idx_t(colIdx))
-	return _genericGet[T](DuckdbType[T](), ch.NumValues(), vector)
+	return getVector[T](DuckdbType[T](), ch.NumValues(), vector)
 }
 
-func _genericGet[T validTypes](typ C.duckdb_type, n int, vector C.duckdb_vector) ([]T, error) {
+func getVector[T validTypes](typ C.duckdb_type, n int, vector C.duckdb_vector) ([]T, error) {
 	ty := C.duckdb_vector_get_column_type(vector)
 	defer C.duckdb_destroy_logical_type(&ty)
 
@@ -214,11 +201,15 @@ func _genericGet[T validTypes](typ C.duckdb_type, n int, vector C.duckdb_vector)
 		clearFromMask(arr, vector)
 		return arr, nil
 	default:
-		return nil, fmt.Errorf("invalid typ in _genericGet %v %v", typ, resTyp)
+		return nil, fmt.Errorf("invalid typ in getVector %v %v", typ, resTyp)
 	}
 }
 
-func (v String) String() []byte {
+func (v String) String() string {
+	return string(v.Bytes())
+}
+
+func (v String) Bytes() []byte {
 	if v.length <= stringInlineLength {
 		// inline data is stored from byte 4..16 (up to 12 bytes)
 		return (*[1 << 31]byte)(unsafe.Pointer(&v.prefix))[:v.length:v.length]
@@ -276,7 +267,7 @@ type validTypes interface {
 
 type (
 	String       = duckdb_string_t
-	UUIDInternal = C.duckdb_hugeint
+	UUIDInternal C.duckdb_hugeint
 	Date         = C.duckdb_date
 	DateTime     = C.duckdb_timestamp
 	BigInt       = C.duckdb_hugeint

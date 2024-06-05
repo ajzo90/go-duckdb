@@ -164,9 +164,9 @@ func main() {
 	defer func() {
 		fmt.Println(time.Since(t0))
 	}()
-	const q = `SELECT count(userId) FROM range2(100000000, $str, $bbb) where userId=$user`
+	const q = `SELECT xxx, len(xxx), count(userId) FROM range2(100000000, $str, $bbb) where userId=$user group by xxx`
 
-	rows, err := db.QueryContext(context.Background(), q, sql.Named("str", "123"), sql.Named("bbb", true), sql.Named("user", 1))
+	rows, err := db.QueryContext(context.Background(), q, sql.Named("str", ""), sql.Named("bbb", true), sql.Named("user", 1))
 	check(err)
 	defer rows.Close()
 

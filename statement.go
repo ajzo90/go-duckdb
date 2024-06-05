@@ -46,14 +46,33 @@ func (s *stmt) NumInput() int {
 }
 
 func (s *stmt) bind(args []driver.NamedValue) error {
-	if s.NumInput() != len(args) {
+	if s.NumInput() > len(args) {
 		return fmt.Errorf("incorrect argument count for command: have %d want %d", len(args), s.NumInput())
 	}
 
 	// FIXME (feature): we can't pass nested types as parameters (bind_value) yet
 
-	for i, v := range args {
-		switch v := v.Value.(type) {
+	for i := 0; i < s.NumInput(); i++ {
+		name := C.duckdb_parameter_name(*s.stmt, C.idx_t(i+1))
+		paramName := C.GoString(name)
+		C.duckdb_free(unsafe.Pointer(name))
+		//t := C.duckdb_param_type(*s.stmt, C.idx_t(i+1))
+
+		var arg = args[i]
+
+		for _, v := range args {
+			if v.Ordinal == i+1 {
+				arg = v
+			}
+		}
+
+		for _, v := range args {
+			if v.Name == paramName {
+				arg = v
+			}
+		}
+
+		switch v := arg.Value.(type) {
 		case bool:
 			if rv := C.duckdb_bind_boolean(*s.stmt, C.idx_t(i+1), C.bool(v)); rv == C.DuckDBError {
 				return errCouldNotBind
@@ -148,6 +167,7 @@ func (s *stmt) bind(args []driver.NamedValue) error {
 		default:
 			return driver.ErrSkip
 		}
+
 	}
 
 	return nil
