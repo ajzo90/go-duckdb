@@ -268,7 +268,7 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 		return logicalTypeName(logColType)
 	default:
 		// Handle as primitive type
-		return typeName(colType)
+		return duckdbTypeMap[colType]
 	}
 }
 
@@ -310,7 +310,7 @@ func scanMap(ty C.duckdb_logical_type, vector C.duckdb_vector, rowIdx C.idx_t) (
 			return nil, errMissingKeyOrValue
 		}
 		if !reflect.TypeOf(key).Comparable() {
-			return nil, errUnsupportedMapKeyType
+			return nil, getError(errUnsupportedMapKeyType, nil)
 		}
 	}
 
@@ -444,82 +444,9 @@ func scanENUM(ty C.duckdb_logical_type, vector C.duckdb_vector, rowIdx C.idx_t) 
 }
 
 var (
-	errInvalidType           = errors.New("invalid data type")
-	errMissingKeyOrValue     = errors.New("missing key and/or value for map item")
-	errUnsupportedMapKeyType = errors.New("map key type not supported by driver")
+	errInvalidType       = errors.New("invalid data type")
+	errMissingKeyOrValue = errors.New("missing key and/or value for map item")
 )
-
-func typeName(t C.duckdb_type) string {
-	// Corresponds to enum order of duckdb_type
-	switch t {
-	case C.DUCKDB_TYPE_INVALID:
-		return "INVALID"
-	case C.DUCKDB_TYPE_BOOLEAN:
-		return "BOOLEAN"
-	case C.DUCKDB_TYPE_TINYINT:
-		return "TINYINT"
-	case C.DUCKDB_TYPE_SMALLINT:
-		return "SMALLINT"
-	case C.DUCKDB_TYPE_INTEGER:
-		return "INTEGER"
-	case C.DUCKDB_TYPE_BIGINT:
-		return "BIGINT"
-	case C.DUCKDB_TYPE_UTINYINT:
-		return "UTINYINT"
-	case C.DUCKDB_TYPE_USMALLINT:
-		return "USMALLINT"
-	case C.DUCKDB_TYPE_UINTEGER:
-		return "UINTEGER"
-	case C.DUCKDB_TYPE_UBIGINT:
-		return "UBIGINT"
-	case C.DUCKDB_TYPE_FLOAT:
-		return "FLOAT"
-	case C.DUCKDB_TYPE_DOUBLE:
-		return "DOUBLE"
-	case C.DUCKDB_TYPE_TIMESTAMP:
-		return "TIMESTAMP"
-	case C.DUCKDB_TYPE_DATE:
-		return "DATE"
-	case C.DUCKDB_TYPE_TIME:
-		return "TIME"
-	case C.DUCKDB_TYPE_INTERVAL:
-		return "INTERVAL"
-	case C.DUCKDB_TYPE_HUGEINT:
-		return "HUGEINT"
-	case C.DUCKDB_TYPE_VARCHAR:
-		return "VARCHAR"
-	case C.DUCKDB_TYPE_BLOB:
-		return "BLOB"
-	case C.DUCKDB_TYPE_DECIMAL:
-		// NOTE: should be handled as logical type
-		return "DECIMAL"
-	case C.DUCKDB_TYPE_TIMESTAMP_S:
-		return "TIMESTAMP_S"
-	case C.DUCKDB_TYPE_TIMESTAMP_MS:
-		return "TIMESTAMP_MS"
-	case C.DUCKDB_TYPE_TIMESTAMP_NS:
-		return "TIMESTAMP_NS"
-	case C.DUCKDB_TYPE_ENUM:
-		// NOTE: should be handled as logical type
-		return "ENUM"
-	case C.DUCKDB_TYPE_LIST:
-		// NOTE: should be handled as logical type
-		return "LIST"
-	case C.DUCKDB_TYPE_STRUCT:
-		// NOTE: should be handled as logical type
-		return "STRUCT"
-	case C.DUCKDB_TYPE_MAP:
-		// NOTE: should be handled as logical type
-		return "MAP"
-	case C.DUCKDB_TYPE_UUID:
-		return "UUID"
-	case C.DUCKDB_TYPE_TIMESTAMP_TZ:
-		return "TIMESTAMPTZ"
-	default:
-		// Should never happen
-		return ""
-	}
-}
 
 func logicalTypeName(lt C.duckdb_logical_type) string {
 	t := C.duckdb_get_type_id(lt)
@@ -540,7 +467,7 @@ func logicalTypeName(lt C.duckdb_logical_type) string {
 	case C.DUCKDB_TYPE_MAP:
 		return logicalTypeNameMap(lt)
 	default:
-		return typeName(t)
+		return duckdbTypeMap[t]
 	}
 }
 
