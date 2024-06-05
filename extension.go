@@ -1,8 +1,8 @@
 package duckdb
 
 import (
+	"context"
 	"database/sql/driver"
-	"golang.org/x/net/context"
 )
 
 func (c *conn) PrepareContext(ctx context.Context, cmd string) (*stmt, error) {
