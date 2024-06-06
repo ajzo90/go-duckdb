@@ -52,20 +52,23 @@ func (s *stmt) bind(args []driver.NamedValue) error {
 
 	// FIXME (feature): we can't pass nested types as parameters (bind_value) yet
 
+	// relaxed length check allow for unused parameters.
 	for i := 0; i < s.NumInput(); i++ {
 		name := C.duckdb_parameter_name(*s.stmt, C.idx_t(i+1))
 		paramName := C.GoString(name)
 		C.duckdb_free(unsafe.Pointer(name))
-		//t := C.duckdb_param_type(*s.stmt, C.idx_t(i+1))
 
+		// fallback on index position
 		var arg = args[i]
 
+		// override with ordinal if set
 		for _, v := range args {
 			if v.Ordinal == i+1 {
 				arg = v
 			}
 		}
 
+		// override with name if set
 		for _, v := range args {
 			if v.Name == paramName {
 				arg = v
