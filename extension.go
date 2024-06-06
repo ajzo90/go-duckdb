@@ -20,6 +20,9 @@ type Rows struct {
 
 func (c *Connector) ConnectRaw(ctx context.Context) (*Conn, error) {
 	con, err := c.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &Conn{conn: *con.(*conn)}, err
 }
 func (s *stmt) QueryContextRaw(ctx context.Context, args []driver.NamedValue) (*Rows, error) {
