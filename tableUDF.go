@@ -22,6 +22,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"github.com/google/uuid"
+	"log"
 	"reflect"
 	"runtime/cgo"
 	"sync"
@@ -261,6 +262,9 @@ func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function
 	defer C.free(unsafe.Pointer(name))
 
 	handle := cgo.NewHandle(function)
+	if !opts.ProjectionPushdown {
+		log.Println("warn: not using projection pushdown")
+	}
 
 	tableFunction := C.duckdb_create_table_function()
 	C.duckdb_table_function_set_name(tableFunction, name)
