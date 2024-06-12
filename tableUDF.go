@@ -39,7 +39,7 @@ type (
 		InitScanner(vecSize int, projection []int) Scanner
 	}
 	Table struct {
-		Name             string
+		Name             string // useful?
 		Columns          []ColumnDef
 		MaxThreads       int
 		Cardinality      int
@@ -415,6 +415,7 @@ type Vector struct {
 	uint16s     []uint16
 	uint8s      []uint8
 	float64s    []float64
+	float32s    []float32
 	bools       []bool
 	uuids       []C.duckdb_hugeint
 	listEntries []C.duckdb_list_entry
@@ -456,6 +457,37 @@ func RawCopy[T any](vec *Vector, v []T) {
 	copy((*[1 << 31]T)(vec.ptr)[:], v)
 }
 
+func (d *Vector) Append(v any) {
+	switch x := v.(type) {
+	case uint64:
+		d.AppendUInt64(x)
+	case uint32:
+		d.AppendUInt32(x)
+	case uint16:
+		d.AppendUInt16(x)
+	case uint8:
+		d.AppendUInt8(x)
+	case int64:
+		d.AppendUInt64(uint64(x))
+	case int32:
+		d.AppendUInt32(uint32(x))
+	case int16:
+		d.AppendUInt16(uint16(x))
+	case int8:
+		d.AppendUInt8(uint8(x))
+	case float64:
+		d.AppendFloat64(x)
+	case float32:
+		d.AppendFloat32(x)
+	case bool:
+		d.AppendBool(x)
+	case []byte:
+		d.AppendBytes(x)
+	default:
+		panic("not supported")
+	}
+}
+
 func (d *Vector) AppendUInt32(v uint32) {
 	d.uint32s[d.pos] = v
 	d.pos++
@@ -483,6 +515,11 @@ func (d *Vector) AppendUInt8(v uint8) {
 
 func (d *Vector) AppendFloat64(v float64) {
 	d.float64s[d.pos] = v
+	d.pos++
+}
+
+func (d *Vector) AppendFloat32(v float32) {
+	d.float32s[d.pos] = v
 	d.pos++
 }
 
@@ -537,6 +574,7 @@ func (d *Vector) init(sz int, v C.duckdb_vector) {
 		initVecSlice(&d.uint16s, d.ptr, sz)
 		initVecSlice(&d.uint8s, d.ptr, sz)
 		initVecSlice(&d.float64s, d.ptr, sz)
+		initVecSlice(&d.float32s, d.ptr, sz)
 		initVecSlice(&d.bools, d.ptr, sz)
 		initVecSlice(&d.uuids, d.ptr, sz)
 		C.duckdb_vector_ensure_validity_writable(v)
