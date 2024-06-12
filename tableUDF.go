@@ -90,7 +90,7 @@ func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function
 	C.duckdb_table_function_set_local_init(tableFunction, C.init(C.udf_local_init))
 	C.duckdb_table_function_set_function(tableFunction, C.callback(C.udf_callback))
 	C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(opts.ProjectionPushdown))
-	C.duckdb_table_function_set_extra_info(tableFunction, unsafe.Pointer(handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
+	C.duckdb_table_function_set_extra_info(tableFunction, unsafe.Pointer(&handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
 
 	for _, v := range function.Arguments() {
 		argtype, err := getDuckdbTypeFromValue(v)
@@ -131,7 +131,7 @@ func udf_bind(info C.duckdb_bind_info) {
 }
 
 func _udf_bind(info C.duckdb_bind_info) error {
-	h := cgo.Handle(C.duckdb_bind_get_extra_info(info))
+	h := *(*cgo.Handle)(C.duckdb_bind_get_extra_info(info))
 	tblFunc := h.Value().(TableFunction)
 
 	var args []any
@@ -231,13 +231,13 @@ func _udf_bind(info C.duckdb_bind_info) error {
 	handle := cgo.NewHandle(&bindValue{b: bind})
 
 	C.duckdb_bind_set_cardinality(info, C.uint64_t(table.Cardinality), C.bool(table.ExactCardinality))
-	C.duckdb_bind_set_bind_data(info, unsafe.Pointer(handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
+	C.duckdb_bind_set_bind_data(info, unsafe.Pointer(&handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
 	return nil
 }
 
 //export udf_destroy_data
 func udf_destroy_data(data unsafe.Pointer) {
-	h := cgo.Handle(data)
+	h := *(*cgo.Handle)(data)
 	h.Delete()
 }
 
@@ -265,17 +265,17 @@ func udf_init(info C.duckdb_init_info) {
 
 //export udf_local_init_cleanup
 func udf_local_init_cleanup(info C.duckdb_init_info) {
-	h := cgo.Handle(info)
+	h := *(*cgo.Handle)(info)
 	h.Value().(Scanner).Close()
 	h.Delete()
 }
 
 func getBind(info C.duckdb_init_info) cgo.Handle {
-	return cgo.Handle(C.duckdb_init_get_bind_data(info))
+	return *(*cgo.Handle)(C.duckdb_init_get_bind_data(info))
 }
 
 func getScanner(info C.duckdb_function_info) cgo.Handle {
-	return cgo.Handle(C.duckdb_function_get_local_init_data(info))
+	return *(*cgo.Handle)(C.duckdb_function_get_local_init_data(info))
 }
 
 //export udf_local_init
@@ -283,7 +283,8 @@ func udf_local_init(info C.duckdb_init_info) {
 	bind := getBind(info).Value().(*bindValue)
 	vecSize := int(C.duckdb_vector_size())
 	scanner := bind.b.InitScanner(vecSize, bind.projection)
-	C.duckdb_init_set_init_data(info, unsafe.Pointer(cgo.NewHandle(scanner)), C.duckdb_delete_callback_t(C.udf_local_init_cleanup))
+	h := cgo.NewHandle(scanner)
+	C.duckdb_init_set_init_data(info, unsafe.Pointer(&h), C.duckdb_delete_callback_t(C.udf_local_init_cleanup))
 }
 
 //export udf_callback
