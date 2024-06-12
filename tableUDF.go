@@ -132,7 +132,7 @@ func udf_bind(info C.duckdb_bind_info) {
 }
 
 func _udf_bind(info C.duckdb_bind_info) error {
-	h := *(*cgo.Handle)(C.duckdb_bind_get_extra_info(info))
+	h := *(*cgo.Handle)(unsafe.Pointer(C.duckdb_bind_get_extra_info(info)))
 	tblFunc := h.Value().(TableFunction)
 
 	var args []any
@@ -266,7 +266,7 @@ func udf_init(info C.duckdb_init_info) {
 
 //export udf_local_init_cleanup
 func udf_local_init_cleanup(info C.duckdb_init_info) {
-	h := *(*cgo.Handle)(info)
+	h := *(*cgo.Handle)(unsafe.Pointer(info))
 	h.Value().(Scanner).Close()
 	h.Delete()
 }
@@ -284,8 +284,8 @@ func udf_local_init(info C.duckdb_init_info) {
 	bind := getBind(info).Value().(*bindValue)
 	vecSize := int(C.duckdb_vector_size())
 	scanner := bind.binding.InitScanner(vecSize, bind.projection)
-	h := cgo.NewHandle(scanner)
-	C.duckdb_init_set_init_data(info, unsafe.Pointer(&h), C.duckdb_delete_callback_t(C.udf_local_init_cleanup))
+	handle := cgo.NewHandle(scanner)
+	C.duckdb_init_set_init_data(info, unsafe.Pointer(&handle), C.duckdb_delete_callback_t(C.udf_local_init_cleanup))
 }
 
 //export udf_callback
