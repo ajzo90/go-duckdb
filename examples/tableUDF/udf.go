@@ -98,15 +98,15 @@ func (schema *schema) Table() *duckdb.Table {
 	return schema.schema
 }
 
-func (schema *schema) InitScanner(vecSize int) (scanner duckdb.Scanner) {
+func (schema *schema) InitScanner(vecSize int, projection []int) (scanner duckdb.Scanner) {
 
 	s := &udfScanner{
 		schema:  schema,
 		vecSize: vecSize,
-		fns:     make([]func(vector *duckdb.Vector), 0, len(schema.schema.Projection)),
+		fns:     make([]func(vector *duckdb.Vector), 0, len(projection)),
 	}
 
-	for _, pos := range schema.schema.Projection {
+	for _, pos := range projection {
 		var fn func(vec *duckdb.Vector)
 		switch pos {
 		case 0:

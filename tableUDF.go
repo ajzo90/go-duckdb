@@ -36,12 +36,15 @@ type (
 	}
 	Binding interface {
 		Table() *Table
-		InitScanner(vecSize int) Scanner
+		InitScanner(vecSize int, projection []int) Scanner
+	}
+	bindValue struct {
+		b          Binding
+		projection []int
 	}
 	Table struct {
 		Name             string
 		Columns          []ColumnDef
-		Projection       []int
 		MaxThreads       int
 		Cardinality      int
 		ExactCardinality bool
@@ -56,6 +59,67 @@ type (
 		Bind(named map[string]any, args []any) (Binding, error)
 	}
 )
+
+func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableFunction) error {
+	return c.Raw(func(driverConn any) error {
+		conn, ok := driverConn.(driver.Conn)
+		if !ok {
+			return driver.ErrBadConn
+		}
+		return RegisterTableUDFConn(conn, name, opts, function)
+	})
+}
+
+func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function TableFunction) error {
+	duckConn, err := getConn(c)
+	if err != nil {
+		return err
+	}
+	name := C.CString(_name)
+	defer C.free(unsafe.Pointer(name))
+
+	handle := cgo.NewHandle(function)
+	if !opts.ProjectionPushdown {
+		log.Println("warn: not using projection pushdown")
+	}
+
+	tableFunction := C.duckdb_create_table_function()
+	C.duckdb_table_function_set_name(tableFunction, name)
+	C.duckdb_table_function_set_bind(tableFunction, C.bind(C.udf_bind))
+	C.duckdb_table_function_set_init(tableFunction, C.init(C.udf_init))
+	C.duckdb_table_function_set_local_init(tableFunction, C.init(C.udf_local_init))
+	C.duckdb_table_function_set_function(tableFunction, C.callback(C.udf_callback))
+	C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(opts.ProjectionPushdown))
+	C.duckdb_table_function_set_extra_info(tableFunction, unsafe.Pointer(handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
+
+	for _, v := range function.Arguments() {
+		argtype, err := getDuckdbTypeFromValue(v)
+		if err != nil {
+			return err
+		}
+		lt := C.duckdb_create_logical_type(argtype)
+		C.duckdb_table_function_add_parameter(tableFunction, lt)
+		C.duckdb_destroy_logical_type(&lt)
+	}
+
+	for name, v := range function.NamedArguments() {
+		argtype, err := getDuckdbTypeFromValue(v)
+		if err != nil {
+			return err
+		}
+		lt := C.duckdb_create_logical_type(argtype)
+		argName := C.CString(name)
+		C.duckdb_table_function_add_named_parameter(tableFunction, argName, lt)
+
+		C.duckdb_destroy_logical_type(&lt)
+		C.free(unsafe.Pointer(argName))
+	}
+	state := C.duckdb_register_table_function(duckConn.duckdbCon, tableFunction)
+	if state != 0 {
+		return invalidTableFunctionError()
+	}
+	return nil
+}
 
 //export udf_bind
 func udf_bind(info C.duckdb_bind_info) {
@@ -164,7 +228,7 @@ func _udf_bind(info C.duckdb_bind_info) error {
 		}
 	}
 
-	handle := cgo.NewHandle(bind)
+	handle := cgo.NewHandle(&bindValue{b: bind})
 
 	C.duckdb_bind_set_cardinality(info, C.uint64_t(table.Cardinality), C.bool(table.ExactCardinality))
 	C.duckdb_bind_set_bind_data(info, unsafe.Pointer(handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
@@ -188,13 +252,13 @@ func malloc(strs ...unsafe.Pointer) unsafe.Pointer {
 //export udf_init
 func udf_init(info C.duckdb_init_info) {
 	count := int(C.duckdb_init_get_column_count(info))
-	bind := getBind(info).Value().(Binding)
-	table := bind.Table()
+	bind := getBind(info).Value().(*bindValue)
+	table := bind.b.Table()
 
-	table.Projection = make([]int, count)
+	bind.projection = make([]int, count)
 	for i := 0; i < count; i++ {
 		srcPos := int(C.duckdb_init_get_column_index(info, C.uint64_t(i)))
-		table.Projection[i] = srcPos
+		bind.projection[i] = srcPos
 	}
 	C.duckdb_init_set_max_threads(info, C.uint64_t(table.MaxThreads))
 }
@@ -216,9 +280,9 @@ func getScanner(info C.duckdb_function_info) cgo.Handle {
 
 //export udf_local_init
 func udf_local_init(info C.duckdb_init_info) {
-	bind := getBind(info).Value().(Binding)
+	bind := getBind(info).Value().(*bindValue)
 	vecSize := int(C.duckdb_vector_size())
-	scanner := bind.InitScanner(vecSize)
+	scanner := bind.b.InitScanner(vecSize, bind.projection)
 	C.duckdb_init_set_init_data(info, unsafe.Pointer(cgo.NewHandle(scanner)), C.duckdb_delete_callback_t(C.udf_local_init_cleanup))
 }
 
@@ -241,67 +305,6 @@ func udf_callback(info C.duckdb_function_info, output C.duckdb_data_chunk) {
 
 type UDFOptions struct {
 	ProjectionPushdown bool
-}
-
-func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableFunction) error {
-	return c.Raw(func(driverConn any) error {
-		conn, ok := driverConn.(driver.Conn)
-		if !ok {
-			return driver.ErrBadConn
-		}
-		return RegisterTableUDFConn(conn, name, opts, function)
-	})
-}
-
-func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function TableFunction) error {
-	duckConn, err := getConn(c)
-	if err != nil {
-		return err
-	}
-	name := C.CString(_name)
-	defer C.free(unsafe.Pointer(name))
-
-	handle := cgo.NewHandle(function)
-	if !opts.ProjectionPushdown {
-		log.Println("warn: not using projection pushdown")
-	}
-
-	tableFunction := C.duckdb_create_table_function()
-	C.duckdb_table_function_set_name(tableFunction, name)
-	C.duckdb_table_function_set_bind(tableFunction, C.bind(C.udf_bind))
-	C.duckdb_table_function_set_init(tableFunction, C.init(C.udf_init))
-	C.duckdb_table_function_set_local_init(tableFunction, C.init(C.udf_local_init))
-	C.duckdb_table_function_set_function(tableFunction, C.callback(C.udf_callback))
-	C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(opts.ProjectionPushdown))
-	C.duckdb_table_function_set_extra_info(tableFunction, unsafe.Pointer(handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
-
-	for _, v := range function.Arguments() {
-		argtype, err := getDuckdbTypeFromValue(v)
-		if err != nil {
-			return err
-		}
-		lt := C.duckdb_create_logical_type(argtype)
-		C.duckdb_table_function_add_parameter(tableFunction, lt)
-		C.duckdb_destroy_logical_type(&lt)
-	}
-
-	for name, v := range function.NamedArguments() {
-		argtype, err := getDuckdbTypeFromValue(v)
-		if err != nil {
-			return err
-		}
-		lt := C.duckdb_create_logical_type(argtype)
-		argName := C.CString(name)
-		C.duckdb_table_function_add_named_parameter(tableFunction, argName, lt)
-
-		C.duckdb_destroy_logical_type(&lt)
-		C.free(unsafe.Pointer(argName))
-	}
-	state := C.duckdb_register_table_function(duckConn.duckdbCon, tableFunction)
-	if state != 0 {
-		return invalidTableFunctionError()
-	}
-	return nil
 }
 
 func getDuckdbTypeFromValue(v any) (C.duckdb_type, error) {
