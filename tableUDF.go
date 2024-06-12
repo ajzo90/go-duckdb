@@ -38,10 +38,6 @@ type (
 		Table() *Table
 		InitScanner(vecSize int, projection []int) Scanner
 	}
-	bindValue struct {
-		b          Binding
-		projection []int
-	}
 	Table struct {
 		Name             string
 		Columns          []ColumnDef
@@ -59,6 +55,11 @@ type (
 		Bind(named map[string]any, args []any) (Binding, error)
 	}
 )
+
+type bindValue struct {
+	binding    Binding
+	projection []int
+}
 
 func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableFunction) error {
 	return c.Raw(func(driverConn any) error {
@@ -228,7 +229,7 @@ func _udf_bind(info C.duckdb_bind_info) error {
 		}
 	}
 
-	handle := cgo.NewHandle(&bindValue{b: bind})
+	handle := cgo.NewHandle(&bindValue{binding: bind})
 
 	C.duckdb_bind_set_cardinality(info, C.uint64_t(table.Cardinality), C.bool(table.ExactCardinality))
 	C.duckdb_bind_set_bind_data(info, unsafe.Pointer(&handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
@@ -253,7 +254,7 @@ func malloc(strs ...unsafe.Pointer) unsafe.Pointer {
 func udf_init(info C.duckdb_init_info) {
 	count := int(C.duckdb_init_get_column_count(info))
 	bind := getBind(info).Value().(*bindValue)
-	table := bind.b.Table()
+	table := bind.binding.Table()
 
 	bind.projection = make([]int, count)
 	for i := 0; i < count; i++ {
@@ -282,7 +283,7 @@ func getScanner(info C.duckdb_function_info) cgo.Handle {
 func udf_local_init(info C.duckdb_init_info) {
 	bind := getBind(info).Value().(*bindValue)
 	vecSize := int(C.duckdb_vector_size())
-	scanner := bind.b.InitScanner(vecSize, bind.projection)
+	scanner := bind.binding.InitScanner(vecSize, bind.projection)
 	h := cgo.NewHandle(scanner)
 	C.duckdb_init_set_init_data(info, unsafe.Pointer(&h), C.duckdb_delete_callback_t(C.udf_local_init_cleanup))
 }
@@ -490,8 +491,6 @@ func (d *Vector) AppendBool(v bool) {
 	d.pos++
 }
 
-//var emptyString = []byte(" ")
-
 func (d *Vector) appendBytes(v []byte) {
 	sz := len(v)
 	if sz > 0 {
@@ -506,6 +505,7 @@ func (d *Vector) appendBytes(v []byte) {
 func (d *Vector) AppendBytes(v []byte) {
 	d.appendBytes(v)
 }
+
 func (d *Vector) Size() int {
 	return d.pos
 }
