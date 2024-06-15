@@ -110,11 +110,11 @@ func (ch *Chunk) Uint32List(colIdx int) (*ListType[uint32], error) {
 }
 
 func (ch *Chunk) Time(colIdx int) ([]DateTime, error) {
-	return genericGet[C.duckdb_timestamp](C.DUCKDB_TYPE_TIME, ch, colIdx)
+	return genericGet[DateTime](C.DUCKDB_TYPE_TIME, ch, colIdx)
 }
 
 func (ch *Chunk) Timestamp(colIdx int) ([]DateTime, error) {
-	return genericGet[C.duckdb_timestamp](C.DUCKDB_TYPE_TIMESTAMP, ch, colIdx)
+	return genericGet[DateTime](C.DUCKDB_TYPE_TIMESTAMP, ch, colIdx)
 }
 
 func (ch *Chunk) Date(colIdx int) ([]Date, error) {
@@ -223,6 +223,9 @@ func (d Date) Date() time.Time {
 	v := C.duckdb_from_date(d)
 	return time.Date(int(v.year), time.Month(v.month), int(v.day), 0, 0, 0, 0, time.UTC)
 }
+func (d DateTime) Timestamp() time.Time {
+	return time.UnixMicro(int64(d.micros)).UTC()
+}
 
 func DuckdbType[T any]() C.duckdb_type {
 	var v T
@@ -262,14 +265,14 @@ func DuckdbType[T any]() C.duckdb_type {
 
 type validTypes interface {
 	bool | int8 | int16 | int32 | int64 | uint8 | uint16 | uint32 | uint64 | float32 | float64 |
-		String | UUIDInternal | C.duckdb_timestamp | C.duckdb_date | C.duckdb_time | C.duckdb_time_tz
+		String | UUIDInternal | C.duckdb_timestamp | C.duckdb_date | C.duckdb_time | C.duckdb_time_tz | DateTime
 }
 
 type (
 	String       = duckdb_string_t
 	UUIDInternal C.duckdb_hugeint
 	Date         = C.duckdb_date
-	DateTime     = C.duckdb_timestamp
+	DateTime     C.duckdb_timestamp
 	BigInt       = C.duckdb_hugeint
 )
 
