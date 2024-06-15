@@ -26,6 +26,7 @@ import (
 	"reflect"
 	"runtime/cgo"
 	"sync"
+	"time"
 	"unsafe"
 )
 
@@ -91,7 +92,7 @@ func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function
 	C.duckdb_table_function_set_local_init(tableFunction, C.init(C.udf_local_init))
 	C.duckdb_table_function_set_function(tableFunction, C.callback(C.udf_callback))
 	C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(opts.ProjectionPushdown))
-	C.duckdb_table_function_set_extra_info(tableFunction, unsafe.Pointer(&handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
+	C.duckdb_table_function_set_extra_info(tableFunction, unsafe.Pointer(handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
 
 	for _, v := range function.Arguments() {
 		argtype, err := getDuckdbTypeFromValue(v)
@@ -132,7 +133,7 @@ func udf_bind(info C.duckdb_bind_info) {
 }
 
 func _udf_bind(info C.duckdb_bind_info) error {
-	h := *(*cgo.Handle)(unsafe.Pointer(C.duckdb_bind_get_extra_info(info)))
+	h := cgo.Handle(C.duckdb_bind_get_extra_info(info))
 	tblFunc := h.Value().(TableFunction)
 
 	var args []any
@@ -337,6 +338,8 @@ func getDuckdbTypeFromValue(v any) (C.duckdb_type, error) {
 		return C.DUCKDB_TYPE_DOUBLE, nil
 	case float32:
 		return C.DUCKDB_TYPE_FLOAT, nil
+	case time.Time:
+		return C.DUCKDB_TYPE_TIMESTAMP, nil
 	default:
 		return C.DUCKDB_TYPE_INVALID, unsupportedTypeError(reflect.TypeOf(v).String())
 	}
