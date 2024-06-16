@@ -22,7 +22,7 @@ SELECT *, version() FROM cities`
 	stmt := Must(conn.PrepareContext(context.Background(), q))
 	defer stmt.Close()
 
-	rows := Must(stmt.QueryContext(context.Background(), []driver.NamedValue{}))
+	rows := Must(stmt.QueryContextRaw(context.Background(), []driver.NamedValue{}))
 	defer rows.Close()
 
 	var ch duckdb.Chunk
