@@ -47,7 +47,7 @@ type (
 		ExactCardinality bool
 	}
 	Scanner interface {
-		Scan(chunk *DataChunk) (int, error)
+		Scan(chunk *UDFDataChunk) (int, error)
 		Close()
 	}
 	TableFunction interface {
@@ -375,13 +375,13 @@ func getBindValue(t C.duckdb_type, v C.duckdb_value) (any, error) {
 
 var chunkPool = sync.Pool{
 	New: func() any {
-		return &DataChunk{}
+		return &UDFDataChunk{}
 	},
 }
 
-func acquireChunk(vecSize int, output C.duckdb_data_chunk) *DataChunk {
+func acquireChunk(vecSize int, output C.duckdb_data_chunk) *UDFDataChunk {
 	cols := int(C.duckdb_data_chunk_get_column_count(output))
-	c := chunkPool.Get().(*DataChunk)
+	c := chunkPool.Get().(*UDFDataChunk)
 	if cap(c.Columns) < cols {
 		c.Columns = make([]Vector, cols)
 	}
@@ -393,7 +393,7 @@ func acquireChunk(vecSize int, output C.duckdb_data_chunk) *DataChunk {
 	return c
 }
 
-func releaseChunk(ch *DataChunk) {
+func releaseChunk(ch *UDFDataChunk) {
 	for i := range ch.Columns {
 		if ch.Columns[i].childVec != nil {
 			releaseVector(ch.Columns[i].childVec)
@@ -403,7 +403,7 @@ func releaseChunk(ch *DataChunk) {
 	chunkPool.Put(ch)
 }
 
-type DataChunk struct {
+type UDFDataChunk struct {
 	Columns  []Vector
 	Capacity int
 }

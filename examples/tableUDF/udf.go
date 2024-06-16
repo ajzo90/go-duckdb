@@ -78,7 +78,7 @@ func (l *udfScanner) Close() {
 	log.Println("close scanner")
 }
 
-func (l *udfScanner) Scan(ch *duckdb.DataChunk) (int, error) {
+func (l *udfScanner) Scan(ch *duckdb.UDFDataChunk) (int, error) {
 	rem := atomic.AddInt64(&l.schema.rows, -int64(l.vecSize))
 	if rem < 0 {
 		l.vecSize += int(rem)
