@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 	"log"
 	"reflect"
-	"runtime/cgo"
 	"sync"
 	"time"
 	"unsafe"
@@ -80,7 +79,6 @@ func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function
 	name := C.CString(_name)
 	defer C.free(unsafe.Pointer(name))
 
-	handle := cgo.NewHandle(function)
 	if !opts.ProjectionPushdown {
 		log.Println("warn: not using projection pushdown")
 	}
@@ -92,7 +90,7 @@ func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function
 	C.duckdb_table_function_set_local_init(tableFunction, C.init(C.udf_local_init))
 	C.duckdb_table_function_set_function(tableFunction, C.callback(C.udf_callback))
 	C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(opts.ProjectionPushdown))
-	C.duckdb_table_function_set_extra_info(tableFunction, unsafe.Pointer(handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
+	C.duckdb_table_function_set_extra_info(tableFunction, cMem.store(function), C.duckdb_delete_callback_t(C.udf_destroy_data))
 
 	for _, v := range function.Arguments() {
 		argtype, err := getDuckdbTypeFromValue(v)
@@ -133,8 +131,8 @@ func udf_bind(info C.duckdb_bind_info) {
 }
 
 func _udf_bind(info C.duckdb_bind_info) error {
-	h := cgo.Handle(C.duckdb_bind_get_extra_info(info))
-	tblFunc := h.Value().(TableFunction)
+	ref := (*ref)(C.duckdb_bind_get_extra_info(info))
+	tblFunc := cMem.lookup(ref).(TableFunction)
 
 	var args []any
 	for i, v := range tblFunc.Arguments() {
@@ -230,17 +228,15 @@ func _udf_bind(info C.duckdb_bind_info) error {
 		}
 	}
 
-	handle := cgo.NewHandle(&bindValue{binding: bind})
-
 	C.duckdb_bind_set_cardinality(info, C.uint64_t(table.Cardinality), C.bool(table.ExactCardinality))
-	C.duckdb_bind_set_bind_data(info, unsafe.Pointer(&handle), C.duckdb_delete_callback_t(C.udf_destroy_data))
+	C.duckdb_bind_set_bind_data(info, cMem.store(&bindValue{binding: bind}), C.duckdb_delete_callback_t(C.udf_destroy_data))
 	return nil
 }
 
 //export udf_destroy_data
 func udf_destroy_data(data unsafe.Pointer) {
-	h := *(*cgo.Handle)(data)
-	h.Delete()
+	ref := (*ref)(data)
+	cMem.free(ref)
 }
 
 func malloc(strs ...unsafe.Pointer) unsafe.Pointer {
@@ -254,7 +250,8 @@ func malloc(strs ...unsafe.Pointer) unsafe.Pointer {
 //export udf_init
 func udf_init(info C.duckdb_init_info) {
 	count := int(C.duckdb_init_get_column_count(info))
-	bind := getBind(info).Value().(*bindValue)
+	ref := getBind(info)
+	bind := cMem.lookup(ref).(*bindValue)
 	table := bind.binding.Table()
 
 	bind.projection = make([]int, count)
@@ -267,32 +264,32 @@ func udf_init(info C.duckdb_init_info) {
 
 //export udf_local_init_cleanup
 func udf_local_init_cleanup(info C.duckdb_init_info) {
-	h := *(*cgo.Handle)(unsafe.Pointer(info))
-	h.Value().(Scanner).Close()
-	h.Delete()
+	ref := (*ref)(unsafe.Pointer(info))
+	cMem.lookup(ref).(Scanner).Close()
+	cMem.free(ref)
 }
 
-func getBind(info C.duckdb_init_info) cgo.Handle {
-	return *(*cgo.Handle)(C.duckdb_init_get_bind_data(info))
+func getBind(info C.duckdb_init_info) *ref {
+	return (*ref)(C.duckdb_init_get_bind_data(info))
 }
 
-func getScanner(info C.duckdb_function_info) cgo.Handle {
-	return *(*cgo.Handle)(C.duckdb_function_get_local_init_data(info))
+func getScanner(info C.duckdb_function_info) *ref {
+	return (*ref)(C.duckdb_function_get_local_init_data(info))
 }
 
 //export udf_local_init
 func udf_local_init(info C.duckdb_init_info) {
-	bind := getBind(info).Value().(*bindValue)
+	ref := getBind(info)
+	bind := cMem.lookup(ref).(*bindValue)
 	vecSize := int(C.duckdb_vector_size())
 	scanner := bind.binding.InitScanner(vecSize, bind.projection)
-	handle := cgo.NewHandle(scanner)
-	C.duckdb_init_set_init_data(info, unsafe.Pointer(&handle), C.duckdb_delete_callback_t(C.udf_local_init_cleanup))
+	C.duckdb_init_set_init_data(info, cMem.store(scanner), C.duckdb_delete_callback_t(C.udf_local_init_cleanup))
 }
 
 //export udf_callback
 func udf_callback(info C.duckdb_function_info, output C.duckdb_data_chunk) {
 	vecSize := int(C.duckdb_vector_size())
-	scanner := getScanner(info).Value().(Scanner)
+	scanner := cMem.lookup(getScanner(info)).(Scanner)
 
 	ch := acquireChunk(vecSize, output)
 	size, err := scanner.Scan(ch)
