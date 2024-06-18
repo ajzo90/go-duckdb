@@ -15,7 +15,7 @@ type Conn struct {
 }
 
 type Rows struct {
-	rows
+	*rows
 }
 
 func (c *Connector) ConnectRaw(ctx context.Context) (*Conn, error) {
@@ -25,13 +25,13 @@ func (c *Connector) ConnectRaw(ctx context.Context) (*Conn, error) {
 	}
 	return &Conn{conn: *con.(*conn)}, err
 }
+
 func (s *stmt) QueryContextRaw(ctx context.Context, args []driver.NamedValue) (*Rows, error) {
 	r, err := s.QueryContext(ctx, args)
 	if err != nil {
 		return nil, err
 	}
-
-	return &Rows{rows: *(r.(*rows))}, nil
+	return &Rows{rows: r.(*rows)}, nil
 }
 
 func getConn(c any) (*conn, error) {
