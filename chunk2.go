@@ -15,17 +15,32 @@ var chunkPool = sync.Pool{
 	},
 }
 
-func acquireChunk(vecSize int, output C.duckdb_data_chunk) *UDFDataChunk {
-	cols := int(C.duckdb_data_chunk_get_column_count(output))
+func chunkSize(chunk C.duckdb_data_chunk) int {
+	return int(C.duckdb_data_chunk_get_size(chunk))
+}
+
+func acquireChunkFromVec(vecSize int, v C.duckdb_vector) *UDFDataChunk {
+	c := _acquireChunk(vecSize, 1)
+	c.Columns[0].init(vecSize, v)
+	return c
+}
+
+func acquireChunk(vecSize int, chunk C.duckdb_data_chunk) *UDFDataChunk {
+	cols := int(C.duckdb_data_chunk_get_column_count(chunk))
+	c := _acquireChunk(vecSize, cols)
+	for i := range c.Columns {
+		c.Columns[i].init(vecSize, C.duckdb_data_chunk_get_vector(chunk, C.uint64_t(i)))
+	}
+	return c
+}
+
+func _acquireChunk(vecSize int, cols int) *UDFDataChunk {
 	c := chunkPool.Get().(*UDFDataChunk)
 	if cap(c.Columns) < cols {
 		c.Columns = make([]Vector, cols)
 	}
 	c.Columns = c.Columns[:cols]
 	c.Capacity = vecSize
-	for i := range c.Columns {
-		c.Columns[i].init(vecSize, C.duckdb_data_chunk_get_vector(output, C.uint64_t(i)))
-	}
 	return c
 }
 
