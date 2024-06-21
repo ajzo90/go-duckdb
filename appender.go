@@ -153,10 +153,11 @@ func (a *Appender) appendRowSlice(args []driver.Value) error {
 	}
 
 	// Create a new data chunk if the current chunk is full.
-	if C.idx_t(a.rowCount) == C.duckdb_vector_size() || len(a.chunks) == 0 {
+	if a.rowCount == GetDataChunkCapacity() || len(a.chunks) == 0 {
 		if err := a.addDataChunk(); err != nil {
 			return err
 		}
+		a.rowCount = 0
 	}
 
 	// Set all values.
@@ -176,10 +177,16 @@ func (a *Appender) appendDataChunks() error {
 	var state C.duckdb_state
 	var err error
 
-	for _, chunk := range a.chunks {
-		if err = chunk.setSize(); err != nil {
+	for i, chunk := range a.chunks {
+		// All data chunks except the last are at maximum capacity.
+		size := GetDataChunkCapacity()
+		if i == len(a.chunks)-1 {
+			size = a.rowCount
+		}
+		if err = chunk.SetSize(size); err != nil {
 			break
 		}
+
 		state = C.duckdb_append_data_chunk(a.duckdbAppender, chunk.data)
 		if state == C.DuckDBError {
 			err = duckdbError(C.duckdb_appender_error(a.duckdbAppender))
@@ -187,14 +194,28 @@ func (a *Appender) appendDataChunks() error {
 		}
 	}
 
-	a.closeDataChunks()
+	for _, chunk := range a.chunks {
+		chunk.close()
+	}
+
+	a.chunks = a.chunks[:0]
 	a.rowCount = 0
 	return err
 }
 
-func (a *Appender) closeDataChunks() {
-	for _, chunk := range a.chunks {
-		chunk.close()
+func mallocTypeSlice(count int) (unsafe.Pointer, []C.duckdb_logical_type) {
+	var dummy C.duckdb_logical_type
+	size := C.size_t(unsafe.Sizeof(dummy))
+
+	ptr := unsafe.Pointer(C.malloc(C.size_t(count) * size))
+	slice := (*[1 << 30]C.duckdb_logical_type)(ptr)[:count:count]
+
+	return ptr, slice
+}
+
+func destroyTypeSlice(ptr unsafe.Pointer, slice []C.duckdb_logical_type) {
+	for _, t := range slice {
+		C.duckdb_destroy_logical_type(&t)
 	}
-	a.chunks = a.chunks[:0]
+	C.free(ptr)
 }
