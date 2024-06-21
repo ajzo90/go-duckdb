@@ -33,7 +33,6 @@ type ScalarFunctionConfig struct {
 type ScalarFunction interface {
 	Config() ScalarFunctionConfig
 	Exec(in *UDFDataChunk, out *UDFDataChunk) error
-	SetError(err error)
 }
 
 //export scalar_udf_callback
@@ -49,7 +48,7 @@ func scalar_udf_callback(info C.duckdb_function_info, input C.duckdb_data_chunk,
 	// todo: set out validity as intersection of validity
 
 	if err := scalarFunction.Exec(inputChunk, outputChunk); err != nil {
-		scalarFunction.SetError(err)
+		panic(err)
 	}
 }
 

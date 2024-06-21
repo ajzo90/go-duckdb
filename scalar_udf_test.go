@@ -8,18 +8,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type scalarUDF struct {
-	err error
-}
+type MySum struct{}
 
-func (udf *scalarUDF) Config() ScalarFunctionConfig {
+func (udf MySum) Config() ScalarFunctionConfig {
 	return ScalarFunctionConfig{
 		InputTypes: []string{"INT", "INT"},
 		ResultType: "INT",
 	}
 }
 
-func (udf *scalarUDF) Exec(in *UDFDataChunk, out *UDFDataChunk) error {
+func (udf MySum) Exec(in *UDFDataChunk, out *UDFDataChunk) error {
 
 	a := in.Columns[0].uint32s
 	b := in.Columns[1].uint32s
@@ -32,10 +30,6 @@ func (udf *scalarUDF) Exec(in *UDFDataChunk, out *UDFDataChunk) error {
 	return nil
 }
 
-func (udf *scalarUDF) SetError(err error) {
-	udf.err = err
-}
-
 func TestScalarUDFPrimitive(t *testing.T) {
 	db, err := sql.Open("duckdb", "")
 	require.NoError(t, err)
@@ -43,22 +37,13 @@ func TestScalarUDFPrimitive(t *testing.T) {
 	c, err := db.Conn(context.Background())
 	require.NoError(t, err)
 
-	var udf scalarUDF
-	err = RegisterScalarUDF(c, "my_sum", &udf)
+	err = RegisterScalarUDF(c, "my_sum", MySum{})
+	require.NoError(t, err)
 
 	var msg int
-	row := db.QueryRow(`SELECT SUM(my_sum(10, 42::uint8)) AS msg from range(1000)`)
+	row := db.QueryRow(`SELECT SUM(my_sum(10, range::int)) AS msg from range(1000000)`)
 	require.NoError(t, row.Scan(&msg))
-	require.Equal(t, 52*1000, msg)
+	require.Equal(t, 500009500000, msg)
 	require.NoError(t, db.Close())
 
-	// TODO: test other primitive data types
-}
-
-func TestScalarUDFErrors(t *testing.T) {
-	// TODO: trigger all possible errors and move to errors_test.go
-}
-
-func TestScalarUDFNested(t *testing.T) {
-	// TODO: test nested data types
 }
