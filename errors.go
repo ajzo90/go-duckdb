@@ -44,20 +44,27 @@ func invalidatedAppenderError(err error) error {
 	return fmt.Errorf("%w: %s", err, invalidatedAppenderMsg)
 }
 
+func invalidTableFunctionError() error {
+	return fmt.Errorf(invalidTableFunctionMsg)
+}
+
 const (
-	driverErrMsg           = "database/sql/driver"
-	duckdbErrMsg           = "duckdb error"
-	castErrMsg             = "cast error"
-	structFieldErrMsg      = "invalid STRUCT field"
-	columnErrMsg           = "column index"
-	columnCountErrMsg      = "invalid column count"
-	unsupportedTypeErrMsg  = "unsupported data type"
-	invalidatedAppenderMsg = "appended data has been invalidated due to corrupt row"
+	driverErrMsg            = "database/sql/driver"
+	duckdbErrMsg            = "duckdb error"
+	castErrMsg              = "cast error"
+	structFieldErrMsg       = "invalid STRUCT field"
+	columnErrMsg            = "column index"
+	unsupportedTypeErrMsg   = "unsupported data type"
+	invalidatedAppenderMsg  = "appended data has been invalidated due to corrupt row"
+	columnCountErrMsg       = "invalid column count"
+	invalidTableFunctionMsg = "table function was rejected by duckdb for unknown reason"
 )
 
 var (
 	errDriver = errors.New("internal driver error: please file a bug report")
-	errAPI    = errors.New("API error")
+
+	errAPI        = errors.New("API error")
+	errVectorSize = errors.New("data chunks cannot exceed duckdb's internal vector size")
 
 	errParseDSN  = errors.New("could not parse DSN for database")
 	errOpen      = errors.New("could not open database")

@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 )
@@ -26,6 +27,7 @@ type rows struct {
 	chunkRowCount C.idx_t
 	chunkIdx      C.idx_t
 	chunkRowIdx   C.idx_t
+	mtx           sync.Mutex
 }
 
 func newRowsWithStmt(res C.duckdb_result, stmt *stmt) *rows {
@@ -33,6 +35,9 @@ func newRowsWithStmt(res C.duckdb_result, stmt *stmt) *rows {
 	columns := make([]string, 0, n)
 	for i := C.idx_t(0); i < n; i++ {
 		columns = append(columns, C.GoString(C.duckdb_column_name(&res, i)))
+	}
+	if !C.duckdb_result_is_streaming(res) {
+		panic("duckdb: result is not streaming")
 	}
 
 	return &rows{
@@ -53,10 +58,10 @@ func (r *rows) Columns() []string {
 func (r *rows) Next(dst []driver.Value) error {
 	for r.chunkRowIdx == r.chunkRowCount {
 		C.duckdb_destroy_data_chunk(&r.chunk)
-		if r.chunkIdx == r.chunkCount {
+		r.chunk = C.duckdb_stream_fetch_chunk(r.res)
+		if r.chunk == nil {
 			return io.EOF
 		}
-		r.chunk = C.duckdb_result_get_chunk(r.res, r.chunkIdx)
 		r.chunkIdx++
 		r.chunkRowCount = C.duckdb_data_chunk_get_size(r.chunk)
 		r.chunkRowIdx = 0

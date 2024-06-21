@@ -8,28 +8,25 @@ package duckdb
 	void replacement_scan_destroy_data(void *);
 */
 import "C"
+
 import (
-	"runtime/cgo"
 	"unsafe"
 )
 
 type ReplacementScanCallback func(tableName string) (string, []any, error)
 
 func RegisterReplacementScan(connector *Connector, cb ReplacementScanCallback) {
-	handle := cgo.NewHandle(cb)
-	C.duckdb_add_replacement_scan(connector.db, C.duckdb_replacement_callback_t(C.replacement_scan_cb), unsafe.Pointer(&handle), C.duckdb_delete_callback_t(C.replacement_scan_destroy_data))
+	C.duckdb_add_replacement_scan(connector.db, C.duckdb_replacement_callback_t(C.replacement_scan_cb), cMem.store(cb), C.duckdb_delete_callback_t(C.replacement_scan_destroy_data))
 }
 
 //export replacement_scan_destroy_data
 func replacement_scan_destroy_data(data unsafe.Pointer) {
-	h := *(*cgo.Handle)(data)
-	h.Delete()
+	cMem.free((*ref)(data))
 }
 
 //export replacement_scan_cb
 func replacement_scan_cb(info C.duckdb_replacement_scan_info, table_name *C.cchar_t, data *C.void) {
-	h := *(*cgo.Handle)(unsafe.Pointer(data))
-	scanner := h.Value().(ReplacementScanCallback)
+	scanner := cMem.lookup((*ref)(unsafe.Pointer(data))).(ReplacementScanCallback)
 	tFunc, params, err := scanner(C.GoString(table_name))
 	if err != nil {
 		errstr := C.CString(err.Error())

@@ -170,6 +170,7 @@ func (s *stmt) bind(args []driver.NamedValue) error {
 		default:
 			return driver.ErrSkip
 		}
+
 	}
 
 	return nil
@@ -220,7 +221,7 @@ func (s *stmt) execute(ctx context.Context, args []driver.NamedValue) (*C.duckdb
 	}
 
 	var pendingRes C.duckdb_pending_result
-	if state := C.duckdb_pending_prepared(*s.stmt, &pendingRes); state == C.DuckDBError {
+	if state := C.duckdb_pending_prepared_streaming(*s.stmt, &pendingRes); state == C.DuckDBError {
 		dbErr := C.GoString(C.duckdb_pending_error(pendingRes))
 		C.duckdb_destroy_pending(&pendingRes)
 		return nil, errors.New(dbErr)
@@ -242,6 +243,7 @@ func (s *stmt) execute(ctx context.Context, args []driver.NamedValue) (*C.duckdb
 	}()
 
 	var res C.duckdb_result
+
 	state := C.duckdb_execute_pending(pendingRes, &res)
 	close(mainDoneCh)
 	// also wait for background goroutine to finish
