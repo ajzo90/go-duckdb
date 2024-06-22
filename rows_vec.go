@@ -26,16 +26,14 @@ func (r *rows) NextChunk(c *Chunk) error {
 	return nil
 }
 
-type Chunk struct {
-	chunk C.duckdb_data_chunk
-}
+type Chunk = UDFDataChunk
 
-func List[T validTypes](ch *Chunk, colIdx int) (*ListType[T], error) {
+func List[T validTypes](ch *UDFDataChunk, colIdx int) (*ListType[T], error) {
 	vector := C.duckdb_data_chunk_get_vector(ch.chunk, C.idx_t(colIdx))
 	childVector := C.duckdb_list_vector_get_child(vector)
 	entries := castVec[duckdb_list_entry_t](vector)[:ch.NumValues()]
-
-	elements, err := getVector[T](DuckdbType[T](), 1<<31, childVector)
+	childSz := int(C.duckdb_list_vector_get_size(vector))
+	elements, err := getVector[T](DuckdbType[T](), childSz, childVector)
 	if err != nil {
 		return nil, err
 	}
@@ -57,76 +55,80 @@ func (l *ListType[T]) GetRow(row int) []T {
 	return l.elements[entry.offset : entry.offset+entry.length]
 }
 
-func (ch *Chunk) Uint16(colIdx int) ([]uint16, error) {
+func (ch *UDFDataChunk) Uint16(colIdx int) ([]uint16, error) {
 	return GetVector[uint16](ch, colIdx)
 }
 
-func (ch *Chunk) Int8(colIdx int) ([]int8, error) {
+func (ch *UDFDataChunk) Int8(colIdx int) ([]int8, error) {
 	return GetVector[int8](ch, colIdx)
 }
 
-func (ch *Chunk) Int16(colIdx int) ([]int16, error) {
+func (ch *UDFDataChunk) Int16(colIdx int) ([]int16, error) {
 	return GetVector[int16](ch, colIdx)
 }
 
-func (ch *Chunk) Uint64(colIdx int) ([]uint64, error) {
+func (ch *UDFDataChunk) Uint64(colIdx int) ([]uint64, error) {
 	return GetVector[uint64](ch, colIdx)
 }
 
-func (ch *Chunk) Uint32(colIdx int) ([]uint32, error) {
+func (ch *UDFDataChunk) Uint32(colIdx int) ([]uint32, error) {
 	return GetVector[uint32](ch, colIdx)
 }
 
-func (ch *Chunk) Int32(colIdx int) ([]int32, error) {
+func (ch *UDFDataChunk) Int32(colIdx int) ([]int32, error) {
 	return GetVector[int32](ch, colIdx)
 }
 
-func (ch *Chunk) Uint8(colIdx int) ([]uint8, error) {
+func (ch *UDFDataChunk) Uint8(colIdx int) ([]uint8, error) {
 	return GetVector[uint8](ch, colIdx)
 }
 
-func (ch *Chunk) Bool(colIdx int) ([]bool, error) {
+func (ch *UDFDataChunk) Bool(colIdx int) ([]bool, error) {
 	return GetVector[bool](ch, colIdx)
 }
 
-func (ch *Chunk) Int64(colIdx int) ([]int64, error) {
+func (ch *UDFDataChunk) Int64(colIdx int) ([]int64, error) {
 	return GetVector[int64](ch, colIdx)
 }
 
-func (ch *Chunk) Float32(colIdx int) ([]float32, error) {
+func (ch *UDFDataChunk) Float32(colIdx int) ([]float32, error) {
 	return GetVector[float32](ch, colIdx)
 }
 
-func (ch *Chunk) Float64(colIdx int) ([]float64, error) {
+func (ch *UDFDataChunk) Float64(colIdx int) ([]float64, error) {
 	return GetVector[float64](ch, colIdx)
 }
 
-func (ch *Chunk) StringList(colIdx int) (*ListType[String], error) {
-	return List[String](ch, colIdx)
+func (ch *UDFDataChunk) VarcharList(colIdx int) (*ListType[Varchar], error) {
+	return List[Varchar](ch, colIdx)
 }
 
-func (ch *Chunk) Uint32List(colIdx int) (*ListType[uint32], error) {
+func (ch *UDFDataChunk) Uint32List(colIdx int) (*ListType[uint32], error) {
 	return List[uint32](ch, colIdx)
 }
 
-func (ch *Chunk) Time(colIdx int) ([]DateTime, error) {
+func (ch *UDFDataChunk) Time(colIdx int) ([]DateTime, error) {
 	return genericGet[DateTime](C.DUCKDB_TYPE_TIME, ch, colIdx)
 }
 
-func (ch *Chunk) Timestamp(colIdx int) ([]DateTime, error) {
+func (ch *UDFDataChunk) Timestamp(colIdx int) ([]DateTime, error) {
 	return genericGet[DateTime](C.DUCKDB_TYPE_TIMESTAMP, ch, colIdx)
 }
 
-func (ch *Chunk) Date(colIdx int) ([]Date, error) {
+func (ch *UDFDataChunk) Date(colIdx int) ([]Date, error) {
 	return genericGet[C.duckdb_date](C.DUCKDB_TYPE_DATE, ch, colIdx)
 }
 
-func (ch *Chunk) Close() {
+func (ch *UDFDataChunk) Varchar(colIdx int) ([]Varchar, error) {
+	return GetVector[Varchar](ch, colIdx)
+}
+
+func (ch *UDFDataChunk) Close() {
 	C.duckdb_destroy_data_chunk(&ch.chunk)
 	ch.chunk = nil
 }
 
-func (ch *Chunk) NumValues() int {
+func (ch *UDFDataChunk) NumValues() int {
 	return int(C.duckdb_data_chunk_get_size(ch.chunk))
 }
 
@@ -142,6 +144,9 @@ func clearFromMask[T any](buf []T, vector C.duckdb_vector) {
 	ln := len(buf)
 	validityX := C.duckdb_vector_get_validity(vector)
 	if validityX == nil {
+		return
+	}
+	if ln == 0 {
 		return
 	}
 	var validity = (*[1 << 31]uint64)(unsafe.Pointer(validityX))[:maskBlocks(ln)]
@@ -165,10 +170,6 @@ func castVec[T any](vector C.duckdb_vector) *[1 << 31]T {
 	return (*[1 << 31]T)(ptr)
 }
 
-func (ch *Chunk) String(colIdx int) ([]String, error) {
-	return genericGet[String](C.DUCKDB_TYPE_VARCHAR, ch, colIdx)
-}
-
 func (u UUIDInternal) UUID() UUID {
 	var uuid [16]byte
 	// We need to flip the sign bit of the signed hugeint to transform it to UUID bytes
@@ -177,16 +178,16 @@ func (u UUIDInternal) UUID() UUID {
 	return uuid
 }
 
-func (ch *Chunk) UUID(colIdx int) ([]UUIDInternal, error) {
+func (ch *UDFDataChunk) UUID(colIdx int) ([]UUIDInternal, error) {
 	return GetVector[UUIDInternal](ch, colIdx)
 }
 
-func genericGet[T validTypes](typ C.duckdb_type, ch *Chunk, colIdx int) ([]T, error) {
+func genericGet[T validTypes](typ C.duckdb_type, ch *UDFDataChunk, colIdx int) ([]T, error) {
 	vector := C.duckdb_data_chunk_get_vector(ch.chunk, C.idx_t(colIdx))
 	return getVector[T](typ, ch.NumValues(), vector)
 }
 
-func GetVector[T validTypes](ch *Chunk, colIdx int) ([]T, error) {
+func GetVector[T validTypes](ch *UDFDataChunk, colIdx int) ([]T, error) {
 	vector := C.duckdb_data_chunk_get_vector(ch.chunk, C.idx_t(colIdx))
 	return getVector[T](DuckdbType[T](), ch.NumValues(), vector)
 }
@@ -205,11 +206,11 @@ func getVector[T validTypes](typ C.duckdb_type, n int, vector C.duckdb_vector) (
 	}
 }
 
-func (v String) String() string {
+func (v Varchar) Varchar() string {
 	return string(v.Bytes())
 }
 
-func (v String) Bytes() []byte {
+func (v Varchar) Bytes() []byte {
 	if v.length <= stringInlineLength {
 		// inline data is stored from byte 4..16 (up to 12 bytes)
 		return (*[1 << 31]byte)(unsafe.Pointer(&v.prefix))[:v.length:v.length]
@@ -256,7 +257,7 @@ func DuckdbType[T any]() C.duckdb_type {
 		return C.DUCKDB_TYPE_FLOAT
 	case float64:
 		return C.DUCKDB_TYPE_DOUBLE
-	case String:
+	case Varchar:
 		return C.DUCKDB_TYPE_VARCHAR
 	case UUIDInternal:
 		return C.DUCKDB_TYPE_UUID
@@ -265,18 +266,18 @@ func DuckdbType[T any]() C.duckdb_type {
 
 type validTypes interface {
 	bool | int8 | int16 | int32 | int64 | uint8 | uint16 | uint32 | uint64 | float32 | float64 |
-		String | UUIDInternal | C.duckdb_timestamp | C.duckdb_date | C.duckdb_time | C.duckdb_time_tz | DateTime
+		Varchar | UUIDInternal | C.duckdb_timestamp | C.duckdb_date | C.duckdb_time | C.duckdb_time_tz | DateTime | C.duckdb_hugeint | C.duckdb_list_entry
 }
 
 type (
-	String       = duckdb_string_t
+	Varchar      = duckdb_string_t
 	UUIDInternal C.duckdb_hugeint
 	Date         = C.duckdb_date
 	DateTime     C.duckdb_timestamp
 	BigInt       = C.duckdb_hugeint
 )
 
-//func (ch *Chunk) Enum(colIdx int) ([]any, error) {
+//func (ch *UDFDataChunk) Enum(colIdx int) ([]any, error) {
 //	vector := C.duckdb_data_chunk_get_vector(ch.chunk, C.idx_t(colIdx))
 //	columnType := C.duckdb_vector_get_column_type(vector)
 //
@@ -295,7 +296,7 @@ type (
 //
 //	val := C.duckdb_enum_dictionary_value(columnType, (C.idx_t)(idx))
 //	defer C.duckdb_free(unsafe.Pointer(val))
-//	return C.GoString(val), nil
+//	return C.GoVarchar(val), nil
 //
 //}
 

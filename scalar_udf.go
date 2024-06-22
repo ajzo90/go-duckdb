@@ -15,15 +15,11 @@ import "C"
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"strings"
 	"unsafe"
 )
-
-/*
-Interface notes.
-- Currently, you must cast your driver.Value's to int32. Casting to just int is not implemented.
-*/
 
 type ScalarFunctionConfig struct {
 	InputTypes []string
@@ -32,7 +28,7 @@ type ScalarFunctionConfig struct {
 
 type ScalarFunction interface {
 	Config() ScalarFunctionConfig
-	Exec(in *UDFDataChunk, out *UDFDataChunk) error
+	Exec(in *UDFDataChunk, out *Vector)
 }
 
 //export scalar_udf_callback
@@ -41,15 +37,15 @@ func scalar_udf_callback(info C.duckdb_function_info, input C.duckdb_data_chunk,
 	scalarFunction := cMem.lookup((*ref)(unsafe.Pointer(info))).(ScalarFunction)
 
 	var inputSize = chunkSize(input)
-
 	var inputChunk = acquireChunk(inputSize, input)
-	var outputChunk = acquireChunkFromVec(inputSize, output)
+	var outputChunk = acquireVector(inputSize, output)
 
 	// todo: set out validity as intersection of validity
 
-	if err := scalarFunction.Exec(inputChunk, outputChunk); err != nil {
-		panic(err)
-	}
+	scalarFunction.Exec(inputChunk, outputChunk)
+
+	releaseVector(outputChunk)
+	releaseChunk(inputChunk)
 }
 
 //export scalar_udf_delete_callback
@@ -59,85 +55,150 @@ func scalar_udf_delete_callback(data unsafe.Pointer) {
 
 var errScalarUDFNoName = fmt.Errorf("errScalarUDFNoName")
 
-// RegisterScalarUDF registers a scalar UDF.
-func RegisterScalarUDF(c *sql.Conn, name string, function ScalarFunction) error {
-	if name == "" {
+func createLogical(sqlType string) (C.duckdb_logical_type, error) {
+	if sqlType == VARCHAR_LIST {
+		logicalTypeBase := C.duckdb_create_logical_type(SQLToDuckDBMap[VARCHAR])
+		logicalType := C.duckdb_create_list_type(logicalTypeBase)
+		C.duckdb_destroy_logical_type(&logicalTypeBase)
+		return logicalType, nil
+	} else if duckdbType, ok := SQLToDuckDBMap[sqlType]; ok {
+		logicalType := C.duckdb_create_logical_type(duckdbType)
+		return logicalType, nil
+	} else {
+		return nil, unsupportedTypeError(sqlType)
+	}
+}
+
+func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) error {
+	driverConn, err := getConn(c)
+	if err != nil {
+		return err
+	} else if name == "" {
 		return errScalarUDFNoName
 	}
+	functionName := C.CString(name)
+	defer C.free(unsafe.Pointer(functionName))
 
-	// c.Raw exposes the underlying driver connection.
-	err := c.Raw(func(anyConn any) error {
-		driverConn := anyConn.(*conn)
-		functionName := C.CString(name)
-		defer C.free(unsafe.Pointer(functionName))
+	scalarFunction := C.duckdb_create_scalar_function()
+	C.duckdb_scalar_function_set_name(scalarFunction, functionName)
 
-		scalarFunction := C.duckdb_create_scalar_function()
-		C.duckdb_scalar_function_set_name(scalarFunction, functionName)
-
-		// Add input parameters.
-		for _, inputType := range function.Config().InputTypes {
-			sqlType := strings.ToUpper(inputType)
-			duckdbType, ok := SQLToDuckDBMap[sqlType]
-			if !ok {
-				return unsupportedTypeError(sqlType)
-			}
-			logicalType := C.duckdb_create_logical_type(duckdbType)
-			C.duckdb_scalar_function_add_parameter(scalarFunction, logicalType)
-			C.duckdb_destroy_logical_type(&logicalType)
-		}
-
-		// Add result parameter.
-		sqlType := strings.ToUpper(function.Config().ResultType)
-		duckdbType, ok := SQLToDuckDBMap[sqlType]
-		if !ok {
+	// Add input parameters.
+	for _, inputType := range function.Config().InputTypes {
+		sqlType := strings.ToUpper(inputType)
+		logicalType, err := createLogical(sqlType)
+		if err != nil {
 			return unsupportedTypeError(sqlType)
 		}
-		logicalType := C.duckdb_create_logical_type(duckdbType)
-		C.duckdb_scalar_function_set_return_type(scalarFunction, logicalType)
+		C.duckdb_scalar_function_add_parameter(scalarFunction, logicalType)
 		C.duckdb_destroy_logical_type(&logicalType)
+	}
 
-		// Set the actual function.
-		C.duckdb_scalar_function_set_function(scalarFunction, C.scalar_udf_callback_t(C.scalar_udf_callback))
+	// Add result parameter.
+	sqlType := strings.ToUpper(function.Config().ResultType)
+	logicalType, err := createLogical(sqlType)
+	if err != nil {
+		return unsupportedTypeError(sqlType)
+	}
+	C.duckdb_scalar_function_set_return_type(scalarFunction, logicalType)
+	C.duckdb_destroy_logical_type(&logicalType)
 
-		// Set data available during execution.
-		C.duckdb_scalar_function_set_extra_info(
-			scalarFunction,
-			cMem.store(function),
-			C.duckdb_delete_callback_t(C.scalar_udf_delete_callback))
+	// Set the actual function.
+	C.duckdb_scalar_function_set_function(scalarFunction, C.scalar_udf_callback_t(C.scalar_udf_callback))
 
-		// Register the function.
-		state := C.duckdb_register_scalar_function(driverConn.duckdbCon, scalarFunction)
-		C.duckdb_destroy_scalar_function(&scalarFunction)
-		if state == C.DuckDBError {
-			return getError(errDriver, nil)
+	// Set data available during execution.
+	C.duckdb_scalar_function_set_extra_info(
+		scalarFunction,
+		cMem.store(function),
+		C.duckdb_delete_callback_t(C.scalar_udf_delete_callback))
+
+	// Register the function.
+	state := C.duckdb_register_scalar_function(driverConn.duckdbCon, scalarFunction)
+	C.duckdb_destroy_scalar_function(&scalarFunction)
+
+	if state == C.DuckDBError {
+		return getError(errDriver, nil)
+	}
+
+	return nil
+}
+
+// RegisterScalarUDF registers a scalar UDF.
+func RegisterScalarUDF(c *sql.Conn, name string, function ScalarFunction) error {
+	// c.Raw exposes the underlying driver connection.
+	err := c.Raw(func(anyConn any) error {
+		conn, ok := anyConn.(driver.Conn)
+		if !ok {
+			return driver.ErrBadConn
 		}
-		return nil
+		return RegisterScalarUDFConn(conn, name, function)
 	})
 	return err
 }
 
-// SQLToDuckDBMap TODO..
+const (
+	INVALID      = ""
+	BOOL         = "BOOL"
+	BOOLEAN      = "BOOLEAN"
+	TINYINT      = "TINYINT"
+	SMALLINT     = "SMALLINT"
+	INTEGER      = "INTEGER"
+	INT          = "INT"
+	BIGINT       = "BIGINT"
+	UTINYINT     = "UTINYINT"
+	USMALLINT    = "USMALLINT"
+	UINTEGER     = "UINTEGER"
+	UBIGINT      = "UBIGINT"
+	FLOAT        = "FLOAT"
+	DOUBLE       = "DOUBLE"
+	TIMESTAMP    = "TIMESTAMP"
+	DATE         = "DATE"
+	TIME         = "TIME"
+	INTERVAL     = "INTERVAL"
+	HUGEINT      = "HUGEINT"
+	UHUGEINT     = "UHUGEINT"
+	VARCHAR      = "VARCHAR"
+	VARCHAR_LIST = "VARCHAR[]"
+
+	BLOB         = "BLOB"
+	DECIMAL      = "DECIMAL"
+	TIMESTAMP_S  = "TIMESTAMP_S"
+	TIMESTAMP_MS = "TIMESTAMP_MS"
+	TIMESTAMP_NS = "TIMESTAMP_NS"
+	ENUM         = "ENUM"
+	LIST         = "LIST"
+	STRUCT       = "STRUCT"
+	MAP          = "MAP"
+	ARRAY        = "ARRAY"
+	UNION        = "UNION"
+	BIT          = "BIT"
+	TIMETZ       = "TIMETZ"
+	TIMESTAMPTZ  = "TIMESTAMPTZ"
+	UUIDTYP      = "UUID"
+	TIME_TZ      = "TIME_TZ"
+)
+
 var SQLToDuckDBMap = map[string]C.duckdb_type{
-	"BOOL":      C.DUCKDB_TYPE_BOOLEAN,
-	"BOOLEAN":   C.DUCKDB_TYPE_BOOLEAN,
-	"TINYINT":   C.DUCKDB_TYPE_TINYINT,
-	"SMALLINT":  C.DUCKDB_TYPE_SMALLINT,
-	"INTEGER":   C.DUCKDB_TYPE_INTEGER,
-	"INT":       C.DUCKDB_TYPE_INTEGER,
-	"BIGINT":    C.DUCKDB_TYPE_BIGINT,
-	"UTINYINT":  C.DUCKDB_TYPE_UTINYINT,
-	"USMALLINT": C.DUCKDB_TYPE_USMALLINT,
-	"UINTEGER":  C.DUCKDB_TYPE_UINTEGER,
-	"UBIGINT":   C.DUCKDB_TYPE_UBIGINT,
-	"FLOAT":     C.DUCKDB_TYPE_FLOAT,
-	"DOUBLE":    C.DUCKDB_TYPE_DOUBLE,
-	"TIMESTAMP": C.DUCKDB_TYPE_TIMESTAMP,
-	"DATE":      C.DUCKDB_TYPE_DATE,
-	"TIME":      C.DUCKDB_TYPE_TIME,
-	"INTERVAL":  C.DUCKDB_TYPE_INTERVAL,
-	"HUGEINT":   C.DUCKDB_TYPE_HUGEINT,
-	"UHUGEINT":  C.DUCKDB_TYPE_UHUGEINT,
-	"VARCHAR":   C.DUCKDB_TYPE_VARCHAR,
+	INVALID:   C.DUCKDB_TYPE_INVALID,
+	BOOL:      C.DUCKDB_TYPE_BOOLEAN,
+	BOOLEAN:   C.DUCKDB_TYPE_BOOLEAN,
+	TINYINT:   C.DUCKDB_TYPE_TINYINT,
+	SMALLINT:  C.DUCKDB_TYPE_SMALLINT,
+	INTEGER:   C.DUCKDB_TYPE_INTEGER,
+	INT:       C.DUCKDB_TYPE_INTEGER,
+	BIGINT:    C.DUCKDB_TYPE_BIGINT,
+	UTINYINT:  C.DUCKDB_TYPE_UTINYINT,
+	USMALLINT: C.DUCKDB_TYPE_USMALLINT,
+	UINTEGER:  C.DUCKDB_TYPE_UINTEGER,
+	UBIGINT:   C.DUCKDB_TYPE_UBIGINT,
+	FLOAT:     C.DUCKDB_TYPE_FLOAT,
+	DOUBLE:    C.DUCKDB_TYPE_DOUBLE,
+	TIMESTAMP: C.DUCKDB_TYPE_TIMESTAMP,
+	DATE:      C.DUCKDB_TYPE_DATE,
+	TIME:      C.DUCKDB_TYPE_TIME,
+	INTERVAL:  C.DUCKDB_TYPE_INTERVAL,
+	HUGEINT:   C.DUCKDB_TYPE_HUGEINT,
+	UHUGEINT:  C.DUCKDB_TYPE_UHUGEINT,
+	VARCHAR:   C.DUCKDB_TYPE_VARCHAR,
 }
 
 /*
