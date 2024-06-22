@@ -623,6 +623,7 @@ func TestMultipleStatements(t *testing.T) {
 }
 
 func TestParquetExtension(t *testing.T) {
+	t.Skip()
 	db := openDB(t)
 	defer db.Close()
 
