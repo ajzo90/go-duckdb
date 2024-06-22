@@ -158,7 +158,7 @@ func main() {
 	defer db.Close()
 	conn, _ := db.Conn(context.Background())
 
-	check(duckdb.RegisterTableUDF(conn, "range2", duckdb.UDFOptions{ProjectionPushdown: true}, newMyTableUDF()))
+	check(duckdb.RegisterTableUDF(conn, "range2", newMyTableUDF()))
 	check(db.Ping())
 	t0 := time.Now()
 	defer func() {

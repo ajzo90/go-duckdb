@@ -55,9 +55,12 @@ func scalar_udf_delete_callback(data unsafe.Pointer) {
 
 var errScalarUDFNoName = fmt.Errorf("errScalarUDFNoName")
 
-func createLogical(sqlType string) (C.duckdb_logical_type, error) {
-	if sqlType == VARCHAR_LIST {
-		logicalTypeBase := C.duckdb_create_logical_type(SQLToDuckDBMap[VARCHAR])
+func createLogicalFromSQLType(sqlType string) (C.duckdb_logical_type, error) {
+	if before, ok := strings.CutSuffix(sqlType, "[]"); ok {
+		logicalTypeBase, err := createLogicalFromSQLType(before)
+		if err != nil {
+			return nil, err
+		}
 		logicalType := C.duckdb_create_list_type(logicalTypeBase)
 		C.duckdb_destroy_logical_type(&logicalTypeBase)
 		return logicalType, nil
@@ -85,7 +88,7 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 	// Add input parameters.
 	for _, inputType := range function.Config().InputTypes {
 		sqlType := strings.ToUpper(inputType)
-		logicalType, err := createLogical(sqlType)
+		logicalType, err := createLogicalFromSQLType(sqlType)
 		if err != nil {
 			return unsupportedTypeError(sqlType)
 		}
@@ -95,7 +98,7 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 
 	// Add result parameter.
 	sqlType := strings.ToUpper(function.Config().ResultType)
-	logicalType, err := createLogical(sqlType)
+	logicalType, err := createLogicalFromSQLType(sqlType)
 	if err != nil {
 		return unsupportedTypeError(sqlType)
 	}
