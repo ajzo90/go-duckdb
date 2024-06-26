@@ -595,12 +595,12 @@ func (d *DecimalType) Load(ch *UDFDataChunk, colIdx int) error {
 			return big.NewInt(i)
 		})
 	case C.DUCKDB_TYPE_HUGEINT:
-		loadDec(d, vector, ch.NumValues(), func(v HugeInt) *big.Int {
-			return hugeIntToNative(C.duckdb_hugeint{
-				lower: v.lower,
-				upper: v.upper,
-			})
-		})
+		//loadDec(d, vector, ch.NumValues(), func(v HugeInt) *big.Int {
+		//	return hugeIntToNative(C.duckdb_hugeint{
+		//		lower: v.lower,
+		//		upper: v.upper,
+		//	})
+		//})
 	default:
 		return fmt.Errorf("invalid decimal type %v", phys)
 	}
