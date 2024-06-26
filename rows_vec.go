@@ -233,7 +233,7 @@ func (l *ListType[T]) load(vector C.duckdb_vector, numValues int) error {
 
 	childType := C.duckdb_vector_get_column_type(vector)
 	defer C.duckdb_destroy_logical_type(&childType)
-	l.child = initVec(childType, childSz)
+	//l.child = initVec(childType, childSz)
 
 	var err error
 	l.elements, err = getVector[T](DuckdbType[T](), childSz, childVector)
@@ -251,7 +251,7 @@ func List[T validTypes](ch *UDFDataChunk, colIdx int) (*ListType[T], error) {
 }
 
 type ListType[T validTypes] struct {
-	child    VectorI
+	//child    VectorI
 	list     []duckdb_list_entry_t
 	elements []T
 }
