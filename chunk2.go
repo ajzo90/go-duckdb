@@ -24,7 +24,7 @@ type Vector struct {
 }
 
 func AppendUUID(d *Vector, v []byte) {
-	Append(d, uuidToHugeInt(UUID(v)))
+	Append(d, HugeInt(uuidToHugeInt(UUID(v))))
 }
 
 func AppendNull(d *Vector) {

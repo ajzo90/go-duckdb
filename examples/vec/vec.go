@@ -34,12 +34,12 @@ SELECT *, version() FROM cities`
 		} else if err != nil {
 			panic(err)
 		}
-		for _, v := range Must(ch.String(0)) {
-			fmt.Println(string(v.String()))
+		for _, v := range Must(ch.Varchar(0)) {
+			fmt.Println(string(v.Bytes()))
 		}
 		fmt.Println(Must(ch.Int32(1)))
-		for _, v := range Must(ch.String(2)) {
-			fmt.Println(string(v.String()))
+		for _, v := range Must(ch.Varchar(2)) {
+			fmt.Println(string(v.Bytes()))
 		}
 
 	}

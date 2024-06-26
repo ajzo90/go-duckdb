@@ -170,56 +170,15 @@ func _udf_bind(info C.duckdb_bind_info) error {
 		colName := C.CString(name)
 		C.duckdb_bind_add_result_column(info, colName, typ)
 		C.free(unsafe.Pointer(colName))
-		C.free(unsafe.Pointer(typ))
 	}
 
 	for _, v := range table.Columns {
-		if _, ok := v.V.([]string); ok {
-			typ, err := getDuckdbTypeFromValue("")
-			if err != nil {
-				return err
-			}
-			listTyp := C.duckdb_create_list_type(C.duckdb_create_logical_type(typ))
-			addCol(v.Name, listTyp)
-		} else if _, ok := v.V.([]uint32); ok {
-			typ, err := getDuckdbTypeFromValue(uint32(0))
-			if err != nil {
-				return err
-			}
-			listTyp := C.duckdb_create_list_type(C.duckdb_create_logical_type(typ))
-			addCol(v.Name, listTyp)
-		} else if enum, ok := v.V.(*Enum); ok {
-			names := enum.Names()
-
-			var alloc []byte
-			var offsets = make([]int, 0, len(names))
-			for i := range names {
-				offsets = append(offsets, len(alloc))
-				alloc = append(alloc, names[i]...)
-				alloc = append(alloc, 0) // null-termination
-			}
-			if len(names) == 0 {
-				offsets = append(offsets, len(alloc))
-				alloc = append(alloc, 0) // null-termination
-			}
-
-			colName := unsafe.Pointer(C.CBytes(alloc))
-			var ptrs = make([]unsafe.Pointer, len(offsets))
-			for i := range offsets {
-				ptrs[i] = unsafe.Add(colName, offsets[i])
-			}
-			p := (**C.char)(malloc(ptrs...))
-			typ := C.duckdb_create_enum_type(p, C.idx_t(len(ptrs)))
-			addCol(v.Name, typ)
-			C.free(colName)
-			C.duckdb_free(unsafe.Pointer(p))
-		} else {
-			typ, err := getDuckdbTypeFromValue(v.V)
-			if err != nil {
-				return err
-			}
-			addCol(v.Name, C.duckdb_create_logical_type(typ))
+		logical, err := createLogicalFromGoValue(v.V)
+		if err != nil {
+			return err
 		}
+		addCol(v.Name, logical)
+		C.duckdb_destroy_logical_type(&logical)
 	}
 
 	C.duckdb_bind_set_cardinality(info, C.uint64_t(table.Cardinality), C.bool(table.ExactCardinality))
@@ -231,6 +190,31 @@ func _udf_bind(info C.duckdb_bind_info) error {
 func udf_destroy_data(data unsafe.Pointer) {
 	ref := (*ref)(data)
 	cMem.free(ref)
+}
+
+func createEnum(names []string) C.duckdb_logical_type {
+	var alloc []byte
+	var offsets = make([]int, 0, len(names))
+	for i := range names {
+		offsets = append(offsets, len(alloc))
+		alloc = append(alloc, names[i]...)
+		alloc = append(alloc, 0) // null-termination
+	}
+	if len(names) == 0 {
+		offsets = append(offsets, len(alloc))
+		alloc = append(alloc, 0) // null-termination
+	}
+
+	colName := unsafe.Pointer(C.CBytes(alloc))
+	var ptrs = make([]unsafe.Pointer, len(offsets))
+	for i := range offsets {
+		ptrs[i] = unsafe.Add(colName, offsets[i])
+	}
+	p := (**C.char)(malloc(ptrs...))
+	typ := C.duckdb_create_enum_type(p, C.idx_t(len(ptrs)))
+	C.free(colName)
+	C.duckdb_free(unsafe.Pointer(p))
+	return typ
 }
 
 func malloc(strs ...unsafe.Pointer) unsafe.Pointer {
