@@ -101,18 +101,18 @@ func createLogicalFromSQLType(sqlType string) (C.duckdb_logical_type, error) {
 	}
 
 	// VARCHAR[2]
-	if m := arrRegexp.FindStringSubmatch(sqlType); len(m) > 0 && m[0] == sqlType {
-		sz, err := strconv.Atoi(m[1])
-		if before, ok := strings.CutSuffix(sqlType, "["+m[1]+"]"); ok && err == nil {
-			logicalTypeBase, err := createLogicalFromSQLType(before)
-			if err != nil {
-				return nil, err
-			}
-			logicalType := C.duckdb_create_array_type(logicalTypeBase, C.ulonglong(sz))
-			C.duckdb_destroy_logical_type(&logicalTypeBase)
-			return logicalType, nil
-		}
-	}
+	//if m := arrRegexp.FindStringSubmatch(sqlType); len(m) > 0 && m[0] == sqlType {
+	//	sz, err := strconv.Atoi(m[1])
+	//	if before, ok := strings.CutSuffix(sqlType, "["+m[1]+"]"); ok && err == nil {
+	//		logicalTypeBase, err := createLogicalFromSQLType(before)
+	//		if err != nil {
+	//			return nil, err
+	//		}
+	//		logicalType := C.duckdb_create_array_type(logicalTypeBase, C.ulong(sz))
+	//		C.duckdb_destroy_logical_type(&logicalTypeBase)
+	//		return logicalType, nil
+	//	}
+	//}
 
 	// DECIMAL(3,2)
 	if m := decimalRegexp.FindStringSubmatch(sqlType); len(m) == 3 && m[0] == sqlType {

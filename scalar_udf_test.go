@@ -145,47 +145,47 @@ func TestScalarUDFListShuffle(t *testing.T) {
 
 }
 
-type MyArrFn struct{}
+//type MyArrFn struct{}
+//
+//func (udf MyArrFn) Config() ScalarFunctionConfig {
+//	return ScalarFunctionConfig{
+//		InputTypes: []string{`INT[3]`},
+//		ResultType: `INT`,
+//	}
+//}
 
-func (udf MyArrFn) Config() ScalarFunctionConfig {
-	return ScalarFunctionConfig{
-		InputTypes: []string{`INT[3]`},
-		ResultType: `INT`,
-	}
-}
+//func (udf MyArrFn) Exec(in *UDFDataChunk, out *Vector) {
+//	var a ArrayType[int32]
+//	err := a.Load(in, 0)
+//	if err != nil {
+//		panic(err)
+//	}
+//	for i := 0; i < a.Rows(); i++ {
+//		els := a.GetRow(i)
+//		var v int32
+//		for _, x := range els {
+//			v += x
+//		}
+//		Append(out, v)
+//	}
+//}
 
-func (udf MyArrFn) Exec(in *UDFDataChunk, out *Vector) {
-	var a ArrayType[int32]
-	err := a.Load(in, 0)
-	if err != nil {
-		panic(err)
-	}
-	for i := 0; i < a.Rows(); i++ {
-		els := a.GetRow(i)
-		var v int32
-		for _, x := range els {
-			v += x
-		}
-		Append(out, v)
-	}
-}
-
-func TestScalarUDFListShuffle2(t *testing.T) {
-	db, err := sql.Open("duckdb", "")
-	require.NoError(t, err)
-
-	c, err := db.Conn(context.Background())
-	require.NoError(t, err)
-
-	err = RegisterScalarUDF(c, "my_fn", MyArrFn{})
-	require.NoError(t, err)
-
-	var msg int
-	row := db.QueryRow(`SELECT sum(my_fn([1,1,range]::int[3])) from range(2048)`)
-	require.NoError(t, row.Scan(&msg))
-	require.Equal(t, 2048*(4+(2047))/2, msg)
-
-}
+//func TestScalarUDFListShuffle2(t *testing.T) {
+//	db, err := sql.Open("duckdb", "")
+//	require.NoError(t, err)
+//
+//	c, err := db.Conn(context.Background())
+//	require.NoError(t, err)
+//
+//	err = RegisterScalarUDF(c, "my_fn", MyArrFn{})
+//	require.NoError(t, err)
+//
+//	var msg int
+//	row := db.QueryRow(`SELECT sum(my_fn([1,1,range]::int[3])) from range(2048)`)
+//	require.NoError(t, row.Scan(&msg))
+//	require.Equal(t, 2048*(4+(2047))/2, msg)
+//
+//}
 
 type DecimalFn struct{}
 
