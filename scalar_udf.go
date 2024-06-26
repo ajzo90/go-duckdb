@@ -36,7 +36,8 @@ type ScalarFunction interface {
 //export scalar_udf_callback
 func scalar_udf_callback(info C.duckdb_function_info, input C.duckdb_data_chunk, output C.duckdb_vector) {
 
-	scalarFunction := cMem.lookup((*ref)(unsafe.Pointer(info))).(ScalarFunction)
+	infoX := C.duckdb_scalar_function_get_extra_info(info)
+	scalarFunction := cMem.lookup((*ref)(infoX)).(ScalarFunction)
 
 	var inputSize = chunkSize(input)
 	var inputChunk = acquireChunk(inputSize, input)
