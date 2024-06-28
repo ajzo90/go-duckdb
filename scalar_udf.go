@@ -17,7 +17,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"strings"
 	"unsafe"
 )
 
@@ -34,19 +33,19 @@ type ScalarFunction interface {
 //export scalar_udf_callback
 func scalar_udf_callback(info C.duckdb_function_info, input C.duckdb_data_chunk, output C.duckdb_vector) {
 
-	infoX := C.duckdb_scalar_function_get_extra_info(info)
-	scalarFunction := cMem.lookup((*ref)(infoX)).(ScalarFunction)
-
-	var inputSize = chunkSize(input)
-	var inputChunk = acquireChunk(inputSize, input)
-	var outputChunk = acquireVector(inputSize, output)
-
-	// todo: set out validity as intersection of validity
-
-	scalarFunction.Exec(inputChunk, outputChunk)
-
-	releaseVector(outputChunk)
-	releaseChunk(inputChunk)
+	//infoX := C.duckdb_scalar_function_get_extra_info(info)
+	//scalarFunction := cMem.lookup((*ref)(infoX)).(ScalarFunction)
+	//
+	//var inputSize = chunkSize(input)
+	//var inputChunk = acquireChunk(inputSize, input)
+	//var outputChunk = acquireVector(inputSize, output)
+	//
+	//// todo: set out validity as intersection of validity
+	//
+	//scalarFunction.Exec(inputChunk, outputChunk)
+	//
+	//releaseVector(outputChunk)
+	//releaseChunk(inputChunk)
 }
 
 //export scalar_udf_delete_callback
@@ -57,54 +56,54 @@ func scalar_udf_delete_callback(data unsafe.Pointer) {
 var errScalarUDFNoName = fmt.Errorf("errScalarUDFNoName")
 
 func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) error {
-	driverConn, err := getConn(c)
-	if err != nil {
-		return err
-	} else if name == "" {
-		return errScalarUDFNoName
-	}
-	functionName := C.CString(name)
-	defer C.free(unsafe.Pointer(functionName))
-
-	scalarFunction := C.duckdb_create_scalar_function()
-	C.duckdb_scalar_function_set_name(scalarFunction, functionName)
-
-	// Add input parameters.
-	for _, inputType := range function.Config().InputTypes {
-		sqlType := strings.ToUpper(inputType)
-		logicalType, err := createLogicalFromSQLType(sqlType)
-		if err != nil {
-			return unsupportedTypeError(sqlType)
-		}
-		C.duckdb_scalar_function_add_parameter(scalarFunction, logicalType)
-		C.duckdb_destroy_logical_type(&logicalType)
-	}
-
-	// Add result parameter.
-	sqlType := strings.ToUpper(function.Config().ResultType)
-	logicalType, err := createLogicalFromSQLType(sqlType)
-	if err != nil {
-		return unsupportedTypeError(sqlType)
-	}
-	C.duckdb_scalar_function_set_return_type(scalarFunction, logicalType)
-	C.duckdb_destroy_logical_type(&logicalType)
-
-	// Set the actual function.
-	C.duckdb_scalar_function_set_function(scalarFunction, C.scalar_udf_callback_t(C.scalar_udf_callback))
-
-	// Set data available during execution.
-	C.duckdb_scalar_function_set_extra_info(
-		scalarFunction,
-		cMem.store(function),
-		C.duckdb_delete_callback_t(C.scalar_udf_delete_callback))
-
-	// Register the function.
-	state := C.duckdb_register_scalar_function(driverConn.duckdbCon, scalarFunction)
-	C.duckdb_destroy_scalar_function(&scalarFunction)
-
-	if state == C.DuckDBError {
-		return getError(errDriver, nil)
-	}
+	//driverConn, err := getConn(c)
+	//if err != nil {
+	//	return err
+	//} else if name == "" {
+	//	return errScalarUDFNoName
+	//}
+	//functionName := C.CString(name)
+	//defer C.free(unsafe.Pointer(functionName))
+	//
+	//scalarFunction := C.duckdb_create_scalar_function()
+	//C.duckdb_scalar_function_set_name(scalarFunction, functionName)
+	//
+	//// Add input parameters.
+	//for _, inputType := range function.Config().InputTypes {
+	//	sqlType := strings.ToUpper(inputType)
+	//	logicalType, err := createLogicalFromSQLType(sqlType)
+	//	if err != nil {
+	//		return unsupportedTypeError(sqlType)
+	//	}
+	//	C.duckdb_scalar_function_add_parameter(scalarFunction, logicalType)
+	//	C.duckdb_destroy_logical_type(&logicalType)
+	//}
+	//
+	//// Add result parameter.
+	//sqlType := strings.ToUpper(function.Config().ResultType)
+	//logicalType, err := createLogicalFromSQLType(sqlType)
+	//if err != nil {
+	//	return unsupportedTypeError(sqlType)
+	//}
+	//C.duckdb_scalar_function_set_return_type(scalarFunction, logicalType)
+	//C.duckdb_destroy_logical_type(&logicalType)
+	//
+	//// Set the actual function.
+	//C.duckdb_scalar_function_set_function(scalarFunction, C.scalar_udf_callback_t(C.scalar_udf_callback))
+	//
+	//// Set data available during execution.
+	//C.duckdb_scalar_function_set_extra_info(
+	//	scalarFunction,
+	//	cMem.store(function),
+	//	C.duckdb_delete_callback_t(C.scalar_udf_delete_callback))
+	//
+	//// Register the function.
+	//state := C.duckdb_register_scalar_function(driverConn.duckdbCon, scalarFunction)
+	//C.duckdb_destroy_scalar_function(&scalarFunction)
+	//
+	//if state == C.DuckDBError {
+	//	return getError(errDriver, nil)
+	//}
 
 	return nil
 }
