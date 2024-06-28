@@ -1,5 +1,5 @@
 DUCKDB_REPO=https://github.com/duckdb/duckdb.git
-DUCKDB_BRANCH=main
+DUCKDB_BRANCH=v1.0.0
 
 .PHONY: install
 install:
@@ -21,9 +21,9 @@ deps.header:
 .PHONY: duckdb
 duckdb:
 	rm -rf duckdb
-	git clone -b ${DUCKDB_BRANCH} ${DUCKDB_REPO}
+	git clone -b ${DUCKDB_BRANCH} --depth 1 ${DUCKDB_REPO}
 
-DUCKDB_COMMON_BUILD_FLAGS := BUILD_SHELL=0 BUILD_UNITTESTS=0 DUCKDB_PLATFORM=any DISABLE_PARQUET=1 BUILD_JSON=1 BUILD_HTTPFS=1
+DUCKDB_COMMON_BUILD_FLAGS := BUILD_SHELL=0 BUILD_UNITTESTS=0 DUCKDB_PLATFORM=any
 
 .PHONY: deps.darwin.amd64
 deps.darwin.amd64: duckdb
@@ -38,9 +38,8 @@ deps.darwin.arm64: duckdb
 	if [ "$(shell uname -s | tr '[:upper:]' '[:lower:]')" != "darwin" ]; then echo "Error: must run build on darwin"; false; fi
 
 	cd duckdb && \
-	CFLAGS="-target arm64-apple-macos11 -O3" CXXFLAGS="-target arm64-apple-macos11 -O3" ${DUCKDB_COMMON_BUILD_FLAGS} make bundle-library -j 2
+	CFLAGS="-target arm64-apple-macos11 -O3" CXXFLAGS="-target arm64-apple-macos11 -O3" ${DUCKDB_COMMON_BUILD_FLAGS}  make bundle-library -j 2
 	cp duckdb/build/release/libduckdb_bundle.a deps/darwin_arm64/libduckdb.a
-	cp -r duckdb/build/release/extension/ deps/darwin_arm64/
 
 .PHONY: deps.linux.amd64
 deps.linux.amd64: duckdb
