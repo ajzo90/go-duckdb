@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -28,7 +29,10 @@ type rows struct {
 	chunkIdx      C.idx_t
 	chunkRowIdx   C.idx_t
 	mtx           sync.Mutex
+	id            uint64
 }
+
+var id uint64
 
 func newRowsWithStmt(res C.duckdb_result, stmt *stmt) *rows {
 	n := C.duckdb_column_count(&res)
@@ -41,6 +45,7 @@ func newRowsWithStmt(res C.duckdb_result, stmt *stmt) *rows {
 	}
 
 	return &rows{
+		id:            atomic.AddUint64(&id, 1),
 		res:           res,
 		stmt:          stmt,
 		columns:       columns,
@@ -462,6 +467,11 @@ func logicalTypeName(lt C.duckdb_logical_type) string {
 		clt := C.duckdb_list_type_child_type(lt)
 		defer C.duckdb_destroy_logical_type(&clt)
 		return logicalTypeName(clt) + "[]"
+	case C.DUCKDB_TYPE_ARRAY:
+		clt := C.duckdb_list_type_child_type(lt)
+		defer C.duckdb_destroy_logical_type(&clt)
+		arrSize := int(C.duckdb_array_type_array_size(lt))
+		return fmt.Sprintf("%s[%d]", logicalTypeName(clt), arrSize)
 	case C.DUCKDB_TYPE_STRUCT:
 		return logicalTypeNameStruct(lt)
 	case C.DUCKDB_TYPE_MAP:

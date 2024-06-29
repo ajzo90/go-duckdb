@@ -34,18 +34,19 @@ func (h *mempool) free(ref *ref) {
 func (h *mempool) lookup(ref *ref) any {
 	h.mtx.Lock()
 	defer h.mtx.Unlock()
+
 	return h.m[*ref]
 }
 
 func (h *mempool) store(v any) unsafe.Pointer {
+	x := C.duckdb_malloc(C.size_t(unsafe.Sizeof(ref(0))))
 
 	h.mtx.Lock()
+	defer h.mtx.Unlock()
+
 	ptr := h.ptr
 	h.m[ptr] = v
 	h.ptr++
-	h.mtx.Unlock()
-
-	x := C.duckdb_malloc(C.size_t(unsafe.Sizeof(ref(0))))
 	*(*ref)(x) = ptr
 
 	return x

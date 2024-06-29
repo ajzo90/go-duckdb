@@ -35,13 +35,11 @@ func (s *stmt) QueryContextRaw(ctx context.Context, args []driver.NamedValue) (*
 }
 
 func getConn(c any) (*conn, error) {
-	var duckConn *conn
 	if co, ok := c.(*conn); ok {
-		duckConn = co
+		return co, nil
 	} else if co, ok := c.(*Conn); ok {
-		duckConn = &co.conn
+		return &co.conn, nil
 	} else {
 		return nil, driver.ErrBadConn
 	}
-	return duckConn, nil
 }

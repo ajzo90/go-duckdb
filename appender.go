@@ -207,6 +207,7 @@ func mallocTypeSlice(count int) (unsafe.Pointer, []C.duckdb_logical_type) {
 	var dummy C.duckdb_logical_type
 	size := C.size_t(unsafe.Sizeof(dummy))
 
+	// todo: duckdb_malloc?
 	ptr := unsafe.Pointer(C.malloc(C.size_t(count) * size))
 	slice := (*[1 << 30]C.duckdb_logical_type)(ptr)[:count:count]
 

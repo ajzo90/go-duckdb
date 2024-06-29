@@ -112,23 +112,23 @@ func (schema *schema) InitScanner(vecSize int, projection []int) (scanner duckdb
 		case 0:
 			fn = func(vec *duckdb.Vector) {
 				for i := 0; i < s.vecSize; i++ {
-					vec.AppendUInt64(uint64(i % 10))
+					duckdb.Append(vec, uint64(i%10))
 				}
 			}
 		case 1:
 			fn = func(vec *duckdb.Vector) {
 				for i := 0; i < s.vecSize; i++ {
 					s.scr = append(s.scr[:0], schema.strVal...)
-					vec.AppendBytes(s.scr)
+					duckdb.AppendBytes(vec, s.scr)
 				}
 			}
 		case 2:
 			fn = func(vec *duckdb.Vector) {
 				for i := 0; i < s.vecSize; i++ {
 					if i%2 == 0 {
-						vec.AppendBool(schema.bVal)
+						duckdb.Append(vec, schema.bVal)
 					} else {
-						vec.AppendNull()
+						duckdb.AppendNull(vec)
 					}
 				}
 
@@ -137,9 +137,9 @@ func (schema *schema) InitScanner(vecSize int, projection []int) (scanner duckdb
 			fn = func(vec *duckdb.Vector) {
 				for i := 0; i < s.vecSize; i++ {
 					if i%2 == 0 {
-						vec.AppendFloat64(schema.fVal)
+						duckdb.Append(vec, schema.fVal)
 					} else {
-						vec.AppendNull()
+						duckdb.AppendNull(vec)
 					}
 				}
 			}
@@ -158,7 +158,7 @@ func main() {
 	defer db.Close()
 	conn, _ := db.Conn(context.Background())
 
-	check(duckdb.RegisterTableUDF(conn, "range2", duckdb.UDFOptions{ProjectionPushdown: true}, newMyTableUDF()))
+	check(duckdb.RegisterTableUDF(conn, "range2", newMyTableUDF()))
 	check(db.Ping())
 	t0 := time.Now()
 	defer func() {

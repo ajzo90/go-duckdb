@@ -22,7 +22,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"github.com/google/uuid"
-	"log"
 	"reflect"
 	"time"
 	"unsafe"
@@ -60,17 +59,17 @@ type bindValue struct {
 	projection []int
 }
 
-func RegisterTableUDF(c *sql.Conn, name string, opts UDFOptions, function TableFunction) error {
+func RegisterTableUDF(c *sql.Conn, name string, function TableFunction) error {
 	return c.Raw(func(driverConn any) error {
 		conn, ok := driverConn.(driver.Conn)
 		if !ok {
 			return driver.ErrBadConn
 		}
-		return RegisterTableUDFConn(conn, name, opts, function)
+		return RegisterTableUDFConn(conn, name, function)
 	})
 }
 
-func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function TableFunction) error {
+func RegisterTableUDFConn(c driver.Conn, _name string, function TableFunction) error {
 	duckConn, err := getConn(c)
 	if err != nil {
 		return err
@@ -78,17 +77,13 @@ func RegisterTableUDFConn(c driver.Conn, _name string, opts UDFOptions, function
 	name := C.CString(_name)
 	defer C.free(unsafe.Pointer(name))
 
-	if !opts.ProjectionPushdown {
-		log.Println("warn: not using projection pushdown")
-	}
-
 	tableFunction := C.duckdb_create_table_function()
 	C.duckdb_table_function_set_name(tableFunction, name)
 	C.duckdb_table_function_set_bind(tableFunction, C.bind(C.udf_bind))
 	C.duckdb_table_function_set_init(tableFunction, C.init(C.udf_init))
 	C.duckdb_table_function_set_local_init(tableFunction, C.init(C.udf_local_init))
 	C.duckdb_table_function_set_function(tableFunction, C.callback(C.udf_callback))
-	C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(opts.ProjectionPushdown))
+	C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(true))
 	C.duckdb_table_function_set_extra_info(tableFunction, cMem.store(function), C.duckdb_delete_callback_t(C.udf_destroy_data))
 
 	for _, v := range function.Arguments() {
@@ -175,56 +170,15 @@ func _udf_bind(info C.duckdb_bind_info) error {
 		colName := C.CString(name)
 		C.duckdb_bind_add_result_column(info, colName, typ)
 		C.free(unsafe.Pointer(colName))
-		C.free(unsafe.Pointer(typ))
 	}
 
 	for _, v := range table.Columns {
-		if _, ok := v.V.([]string); ok {
-			typ, err := getDuckdbTypeFromValue("")
-			if err != nil {
-				return err
-			}
-			listTyp := C.duckdb_create_list_type(C.duckdb_create_logical_type(typ))
-			addCol(v.Name, listTyp)
-		} else if _, ok := v.V.([]uint32); ok {
-			typ, err := getDuckdbTypeFromValue(uint32(0))
-			if err != nil {
-				return err
-			}
-			listTyp := C.duckdb_create_list_type(C.duckdb_create_logical_type(typ))
-			addCol(v.Name, listTyp)
-		} else if enum, ok := v.V.(*Enum); ok {
-			names := enum.Names()
-
-			var alloc []byte
-			var offsets = make([]int, 0, len(names))
-			for i := range names {
-				offsets = append(offsets, len(alloc))
-				alloc = append(alloc, names[i]...)
-				alloc = append(alloc, 0) // null-termination
-			}
-			if len(names) == 0 {
-				offsets = append(offsets, len(alloc))
-				alloc = append(alloc, 0) // null-termination
-			}
-
-			colName := unsafe.Pointer(C.CBytes(alloc))
-			var ptrs = make([]unsafe.Pointer, len(offsets))
-			for i := range offsets {
-				ptrs[i] = unsafe.Add(colName, offsets[i])
-			}
-			p := (**C.char)(malloc(ptrs...))
-			typ := C.duckdb_create_enum_type(p, C.idx_t(len(ptrs)))
-			addCol(v.Name, typ)
-			C.free(colName)
-			C.duckdb_free(unsafe.Pointer(p))
-		} else {
-			typ, err := getDuckdbTypeFromValue(v.V)
-			if err != nil {
-				return err
-			}
-			addCol(v.Name, C.duckdb_create_logical_type(typ))
+		logical, err := createLogicalFromGoValue(v.V)
+		if err != nil {
+			return err
 		}
+		addCol(v.Name, logical)
+		C.duckdb_destroy_logical_type(&logical)
 	}
 
 	C.duckdb_bind_set_cardinality(info, C.uint64_t(table.Cardinality), C.bool(table.ExactCardinality))
@@ -236,6 +190,31 @@ func _udf_bind(info C.duckdb_bind_info) error {
 func udf_destroy_data(data unsafe.Pointer) {
 	ref := (*ref)(data)
 	cMem.free(ref)
+}
+
+func createEnum(names []string) C.duckdb_logical_type {
+	var alloc []byte
+	var offsets = make([]int, 0, len(names))
+	for i := range names {
+		offsets = append(offsets, len(alloc))
+		alloc = append(alloc, names[i]...)
+		alloc = append(alloc, 0) // null-termination
+	}
+	if len(names) == 0 {
+		offsets = append(offsets, len(alloc))
+		alloc = append(alloc, 0) // null-termination
+	}
+
+	colName := unsafe.Pointer(C.CBytes(alloc))
+	var ptrs = make([]unsafe.Pointer, len(offsets))
+	for i := range offsets {
+		ptrs[i] = unsafe.Add(colName, offsets[i])
+	}
+	p := (**C.char)(malloc(ptrs...))
+	typ := C.duckdb_create_enum_type(p, C.idx_t(len(ptrs)))
+	C.free(colName)
+	C.duckdb_free(unsafe.Pointer(p))
+	return typ
 }
 
 func malloc(strs ...unsafe.Pointer) unsafe.Pointer {
@@ -300,10 +279,6 @@ func udf_callback(info C.duckdb_function_info, output C.duckdb_data_chunk) {
 	} else {
 		C.duckdb_data_chunk_set_size(output, C.uint64_t(size))
 	}
-}
-
-type UDFOptions struct {
-	ProjectionPushdown bool
 }
 
 func getDuckdbTypeFromValue(v any) (C.duckdb_type, error) {
