@@ -28,7 +28,7 @@ func (l *logicalTypesWrap) free() {
 
 func (r *rows) prepLogicalTypes(columnCount int) logicalTypesWrap {
 	ptr, types := mallocTypeSlice(columnCount)
-	for i := 0; i < len(r.columns); i++ {
+	for i := 0; i < len(r.chunk.columnNames); i++ {
 		types[i] = C.duckdb_column_logical_type(
 			&r.res,
 			C.idx_t(i),
@@ -107,13 +107,13 @@ func createDataChunk(l *logicalTypesWrap) C.duckdb_data_chunk {
 	return C.duckdb_create_data_chunk((*C.duckdb_logical_type)(l.ptr), C.idx_t(len(l.types)))
 }
 
-func (r *rows) NextChunk(c *Chunk) error {
+func (r *Rows) NextChunk(c *Chunk) error {
 	c.Close()
 	r.mtx.Lock()
 	defer r.mtx.Unlock()
 
 	// load logical types
-	_ = r.prepLogicalTypes(len(r.columns))
+	//_ = r.prepLogicalTypes(len(r.chunk.columns))
 
 	c.chunk = C.duckdb_stream_fetch_chunk(r.res)
 	if c.chunk == nil {

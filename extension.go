@@ -3,6 +3,7 @@ package duckdb
 import (
 	"context"
 	"database/sql/driver"
+	"sync"
 )
 
 func (c *conn) PrepareContext(ctx context.Context, cmd string) (*stmt, error) {
@@ -15,6 +16,7 @@ type Conn struct {
 }
 
 type Rows struct {
+	mtx sync.Mutex
 	*rows
 }
 
