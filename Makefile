@@ -1,5 +1,5 @@
 DUCKDB_REPO=https://github.com/duckdb/duckdb.git
-DUCKDB_BRANCH=g5ebd8ca697
+DUCKDB_BRANCH=main
 
 .PHONY: install
 install:
@@ -16,6 +16,7 @@ test:
 .PHONY: deps.header
 deps.header:
 	git clone -b ${DUCKDB_BRANCH} --depth 1 ${DUCKDB_REPO}
+	git checkout g5ebd8ca697
 	cp duckdb/src/include/duckdb.h duckdb.h
 
 .PHONY: duckdb
