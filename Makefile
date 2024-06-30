@@ -1,5 +1,5 @@
 DUCKDB_REPO=https://github.com/duckdb/duckdb.git
-DUCKDB_BRANCH=main
+DUCKDB_BRANCH=g5ebd8ca697
 
 .PHONY: install
 install:
@@ -38,7 +38,7 @@ deps.darwin.arm64: duckdb
 	if [ "$(shell uname -s | tr '[:upper:]' '[:lower:]')" != "darwin" ]; then echo "Error: must run build on darwin"; false; fi
 
 	cd duckdb && \
-	OVERRIDE_GIT_DESCRIBE=v1.0.1-dev2074-5ebd8ca697 CFLAGS="-target arm64-apple-macos11 -O3" CXXFLAGS="-target arm64-apple-macos11 -O3" ${DUCKDB_COMMON_BUILD_FLAGS}  make bundle-library -j 2
+	OVERRIDE_GIT_DESCRIBE=v1.0.1-dev2074-g5ebd8ca697 CFLAGS="-target arm64-apple-macos11 -O3" CXXFLAGS="-target arm64-apple-macos11 -O3" ${DUCKDB_COMMON_BUILD_FLAGS}  make bundle-library -j 2
 	cp duckdb/build/release/libduckdb_bundle.a deps/darwin_arm64/libduckdb.a
 
 .PHONY: deps.linux.amd64
