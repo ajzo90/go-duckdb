@@ -15,15 +15,13 @@ test:
 
 .PHONY: deps.header
 deps.header:
-	git clone ${DUCKDB_REPO}
-	git checkout 5ebd8ca697
+	git clone -b ${DUCKDB_BRANCH} --depth 1 ${DUCKDB_REPO}
 	cp duckdb/src/include/duckdb.h duckdb.h
 
 .PHONY: duckdb
 duckdb:
 	rm -rf duckdb
-	git clone ${DUCKDB_REPO}
-	git checkout 5ebd8ca697
+	git clone -b ${DUCKDB_BRANCH} --depth 1 ${DUCKDB_REPO}
 
 DUCKDB_COMMON_BUILD_FLAGS := BUILD_SHELL=0 BUILD_UNITTESTS=0 DUCKDB_PLATFORM=any
 
