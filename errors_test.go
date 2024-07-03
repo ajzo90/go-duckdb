@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"strings"
 	"testing"
 
@@ -299,4 +300,140 @@ func TestErrAPISetValue(t *testing.T) {
 	var chunk DataChunk
 	err := chunk.SetValue(1, 42, "hello")
 	testError(t, err, errAPI.Error(), columnCountErrMsg)
+}
+
+func TestDuckDBErrors(t *testing.T) {
+	db := openDB(t)
+	defer db.Close()
+	createTable(db, t, `CREATE TABLE duckdberror_test(bar VARCHAR UNIQUE, baz INT32, u_1 UNION("string" VARCHAR))`)
+	_, err := db.Exec("INSERT INTO duckdberror_test(bar, baz) VALUES('bar', 0)")
+	require.NoError(t, err)
+
+	testCases := []struct {
+		tpl    string
+		errTyp ErrorType
+	}{
+		{
+			tpl:    "SELECT * FROM not_exist WHERE baz=0",
+			errTyp: ErrorTypeCatalog,
+		},
+		{
+			tpl:    "SELECT * FROM duckdberror_test WHERE col=?",
+			errTyp: ErrorTypeBinder,
+		},
+		{
+			tpl:    "SELEC * FROM duckdberror_test baz=0",
+			errTyp: ErrorTypeParser,
+		},
+		{
+			tpl:    "INSERT INTO duckdberror_test(bar, baz) VALUES('bar', 1)",
+			errTyp: ErrorTypeConstraint,
+		},
+		{
+			tpl:    "INSERT INTO duckdberror_test(bar, baz) VALUES('foo', 18446744073709551615)",
+			errTyp: ErrorTypeConversion,
+		},
+		{
+			tpl:    "INSTALL not_exist",
+			errTyp: ErrorTypeHTTP,
+		},
+		{
+			tpl:    "LOAD not_exist",
+			errTyp: ErrorTypeIO,
+		},
+		{
+			tpl:    "SELECT array_length(array_value(array_value(1, 2, 2), array_value(3, 4, 3)), 3)",
+			errTyp: ErrorTypeOutOfRange,
+		},
+		{
+			tpl:    "SELECT '010110'::BIT & '11000'::BIT",
+			errTyp: ErrorTypeInvalidInput,
+		},
+		{
+			tpl:    "SET external_threads=-1",
+			errTyp: ErrorTypeSyntax,
+		},
+		{
+			tpl:    "CREATE UNIQUE INDEX idx ON duckdberror_test(u_1)",
+			errTyp: ErrorTypeInvalidType,
+		},
+	}
+	for _, tc := range testCases {
+		_, err := db.Exec(tc.tpl)
+		de, ok := err.(*Error)
+		if !ok {
+			require.Fail(t, "error type is not (*duckdb.Error)", "tql: %s\ngot: %#v", tc.tpl, err)
+		}
+		require.Equal(t, de.Type, tc.errTyp, "tpl: %s\nactual error msg: %s", tc.tpl, de.Msg)
+	}
+}
+
+func TestGetDuckDBError(t *testing.T) {
+	// only for the corner cases
+	testCases := []*Error{
+		{
+			Msg:  "",
+			Type: ErrorTypeInvalid,
+		},
+		{
+			Msg:  "Unknown",
+			Type: ErrorTypeInvalid,
+		},
+		{
+			Msg:  "Error: xxx",
+			Type: ErrorTypeUnknownType,
+		},
+		// next two for the prefix testing
+		{
+			Msg:  "Invalid Error: xxx",
+			Type: ErrorTypeInvalid,
+		},
+		{
+			Msg:  "Invalid Input Error: xxx",
+			Type: ErrorTypeInvalidInput,
+		},
+	}
+
+	for _, tc := range testCases {
+		err := getDuckDBError(tc.Msg).(*Error)
+		require.Equal(t, tc, err)
+	}
+}
+
+type wrappedDuckDBError struct {
+	e *Error
+}
+
+func (w *wrappedDuckDBError) Error() string {
+	return w.e.Error()
+}
+func (w *wrappedDuckDBError) Unwrap() error {
+	return w.e
+}
+
+func TestGetDuckDBErrorIs(t *testing.T) {
+	const errMsg = "Out of Range Error: Overflow"
+	outOfRangeErr1 := &Error{
+		Type: ErrorTypeOutOfRange,
+		Msg:  errMsg,
+	}
+	outOfRangeErr1Copy := &Error{
+		Type: ErrorTypeOutOfRange,
+		Msg:  errMsg,
+	}
+	outOfRangeErr2 := &Error{
+		Type: ErrorTypeOutOfRange,
+		Msg:  "Out of Range Error: array_length dimension '3' out of range (min: '1', max: '2')",
+	}
+	invalidInputErr := &Error{
+		Type: ErrorTypeInvalidInput,
+		Msg:  "Invalid Input Error: Map keys can not be NULL",
+	}
+
+	require.ErrorIs(t, outOfRangeErr1, outOfRangeErr1)
+	require.ErrorIs(t, outOfRangeErr1Copy, outOfRangeErr1)
+	require.ErrorIs(t, &wrappedDuckDBError{outOfRangeErr1Copy}, outOfRangeErr1)
+	require.Equal(t, false, errors.Is(outOfRangeErr2, outOfRangeErr1))
+	require.Equal(t, false, errors.Is(invalidInputErr, outOfRangeErr1))
+	require.Equal(t, false, errors.Is(errors.New(errMsg), outOfRangeErr1))
 }
