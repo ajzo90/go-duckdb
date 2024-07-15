@@ -7,15 +7,22 @@ package duckdb
 */
 import "C"
 import (
-	"etlite/pkg/strs"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
+func MapFn[From any, FromColl ~[]From, To any](from FromColl, f func(From) To) []To {
+	var out = make([]To, len(from))
+	for i, v := range from {
+		out[i] = f(v)
+	}
+	return out
+}
+
 func StringifyEnum(values []string) string {
-	return "ENUM(" + strings.Join(strs.Map(values, func(s string) string {
+	return "ENUM(" + strings.Join(MapFn(values, func(s string) string {
 		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 	}), ", ") + ")"
 }
