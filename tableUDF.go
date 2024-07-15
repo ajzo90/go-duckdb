@@ -30,7 +30,7 @@ import (
 type (
 	ColumnDef struct {
 		Name string
-		V    any
+		Type string
 	}
 	Binding interface {
 		Table() *Table
@@ -87,21 +87,19 @@ func RegisterTableUDFConn(c driver.Conn, _name string, function TableFunction) e
 	C.duckdb_table_function_set_extra_info(tableFunction, cMem.store(function), C.duckdb_delete_callback_t(C.udf_destroy_data))
 
 	for _, v := range function.Arguments() {
-		argtype, err := getDuckdbTypeFromValue(v)
+		lt, err := createLogicalFromSQLType(SqlTypeFromValue(v))
 		if err != nil {
 			return err
 		}
-		lt := C.duckdb_create_logical_type(argtype)
 		C.duckdb_table_function_add_parameter(tableFunction, lt)
 		C.duckdb_destroy_logical_type(&lt)
 	}
 
 	for name, v := range function.NamedArguments() {
-		argtype, err := getDuckdbTypeFromValue(v)
+		lt, err := createLogicalFromSQLType(SqlTypeFromValue(v))
 		if err != nil {
 			return err
 		}
-		lt := C.duckdb_create_logical_type(argtype)
 		argName := C.CString(name)
 		C.duckdb_table_function_add_named_parameter(tableFunction, argName, lt)
 
@@ -173,7 +171,7 @@ func _udf_bind(info C.duckdb_bind_info) error {
 	}
 
 	for _, v := range table.Columns {
-		logical, err := createLogicalFromGoValue(v.V)
+		logical, err := createLogicalFromSQLType(v.Type)
 		if err != nil {
 			return err
 		}
@@ -281,39 +279,66 @@ func udf_callback(info C.duckdb_function_info, output C.duckdb_data_chunk) {
 	}
 }
 
-func getDuckdbTypeFromValue(v any) (C.duckdb_type, error) {
+func getDuckdbTypeFromValueX(v any) C.duckdb_type {
 	switch v.(type) {
 	case uuid.UUID:
-		return C.DUCKDB_TYPE_UUID, nil
+		return C.DUCKDB_TYPE_UUID
 	case uint64:
-		return C.DUCKDB_TYPE_UBIGINT, nil
+		return C.DUCKDB_TYPE_UBIGINT
 	case int32:
-		return C.DUCKDB_TYPE_INTEGER, nil
+		return C.DUCKDB_TYPE_INTEGER
 	case int16:
-		return C.DUCKDB_TYPE_SMALLINT, nil
+		return C.DUCKDB_TYPE_SMALLINT
 	case int8:
-		return C.DUCKDB_TYPE_TINYINT, nil
+		return C.DUCKDB_TYPE_TINYINT
 	case int64:
-		return C.DUCKDB_TYPE_BIGINT, nil
+		return C.DUCKDB_TYPE_BIGINT
 	case uint32:
-		return C.DUCKDB_TYPE_UINTEGER, nil
+		return C.DUCKDB_TYPE_UINTEGER
 	case uint16:
-		return C.DUCKDB_TYPE_USMALLINT, nil
+		return C.DUCKDB_TYPE_USMALLINT
 	case uint8:
-		return C.DUCKDB_TYPE_UTINYINT, nil
+		return C.DUCKDB_TYPE_UTINYINT
 	case string:
-		return C.DUCKDB_TYPE_VARCHAR, nil
+		return C.DUCKDB_TYPE_VARCHAR
 	case bool:
-		return C.DUCKDB_TYPE_BOOLEAN, nil
+		return C.DUCKDB_TYPE_BOOLEAN
 	case float64:
-		return C.DUCKDB_TYPE_DOUBLE, nil
+		return C.DUCKDB_TYPE_DOUBLE
 	case float32:
-		return C.DUCKDB_TYPE_FLOAT, nil
+		return C.DUCKDB_TYPE_FLOAT
 	case time.Time:
-		return C.DUCKDB_TYPE_TIMESTAMP, nil
+		return C.DUCKDB_TYPE_TIMESTAMP
 	default:
-		return C.DUCKDB_TYPE_INVALID, unsupportedTypeError(reflect.TypeOf(v).String())
+		return C.DUCKDB_TYPE_INVALID
 	}
+}
+
+func SqlTypeFromValue(v any) string {
+
+	if _, ok := v.([]string); ok {
+		return "VARCHAR[]"
+	} else if _, ok := v.([]uint32); ok {
+		return "UINTEGER[]"
+	} else if _, ok := v.([]float64); ok {
+		return "DOUBLE[]"
+	} else if enum, ok := v.(*Enum); ok {
+		return StringifyEnum(enum.values)
+	} else {
+		return duckdbTypeMap[getDuckdbTypeFromValueX(v)]
+	}
+}
+
+func getDuckdbTypeFromValue(v any) (C.duckdb_type, error) {
+	x := getDuckdbTypeFromValueX(v)
+	if x == C.DUCKDB_TYPE_INVALID {
+		x := reflect.TypeOf(v)
+		if x == nil {
+			panic(1)
+		}
+		return C.DUCKDB_TYPE_INVALID, unsupportedTypeError(x.String())
+	}
+	return x, nil
 }
 
 func getBindValue(t C.duckdb_type, v C.duckdb_value) (any, error) {

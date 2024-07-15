@@ -7,13 +7,20 @@ package duckdb
 */
 import "C"
 import (
+	"etlite/pkg/strs"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-func parseEnum(s string) ([]string, bool, error) {
+func StringifyEnum(values []string) string {
+	return "ENUM(" + strings.Join(strs.Map(values, func(s string) string {
+		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	}), ", ") + ")"
+}
+
+func ParseEnum(s string) ([]string, bool, error) {
 	if after, ok := strings.CutPrefix(s, "ENUM("); ok {
 		if enum, ok := strings.CutSuffix(after, ")"); ok {
 			var values []string
@@ -21,7 +28,9 @@ func parseEnum(s string) ([]string, bool, error) {
 			for _, p := range parts {
 				p = strings.TrimSpace(p)
 				if len(p) >= 2 && p[0] == '\'' && p[len(p)-1] == '\'' {
-					values = append(values, p[1:len(p)-1])
+					x := p[1 : len(p)-1]
+					x = strings.ReplaceAll(x, "''", "'")
+					values = append(values, x)
 				} else {
 					return nil, true, fmt.Errorf("invalid ENUM value: %s", p)
 				}
@@ -41,19 +50,30 @@ func createLogicalFromSQLType(sqlType string) (C.duckdb_logical_type, error) {
 		return nil, fmt.Errorf("struc is not supported")
 	}
 
-	// VARCHAR[2]
-	//if m := arrRegexp.FindStringSubmatch(sqlType); len(m) > 0 && m[0] == sqlType {
-	//	sz, err := strconv.Atoi(m[1])
-	//	if before, ok := strings.CutSuffix(sqlType, "["+m[1]+"]"); ok && err == nil {
-	//		logicalTypeBase, err := createLogicalFromSQLType(before)
-	//		if err != nil {
-	//			return nil, err
-	//		}
-	//		logicalType := C.duckdb_create_array_type(logicalTypeBase, C.ulong(sz))
-	//		C.duckdb_destroy_logical_type(&logicalTypeBase)
-	//		return logicalType, nil
-	//	}
-	//}
+	// <TYPE>[2]
+	if m := arrRegexp.FindStringSubmatch(sqlType); len(m) > 0 && m[0] == sqlType {
+		sz, err := strconv.Atoi(m[1])
+		if before, ok := strings.CutSuffix(sqlType, "["+m[1]+"]"); ok && err == nil {
+			logicalTypeBase, err := createLogicalFromSQLType(before)
+			if err != nil {
+				return nil, err
+			}
+			logicalType := C.duckdb_create_array_type(logicalTypeBase, C.ulonglong(sz))
+			C.duckdb_destroy_logical_type(&logicalTypeBase)
+			return logicalType, nil
+		}
+	}
+
+	// <TYPE>[]
+	if before, ok := strings.CutSuffix(sqlType, "[]"); ok {
+		logicalTypeBase, err := createLogicalFromSQLType(before)
+		if err != nil {
+			return nil, err
+		}
+		logicalType := C.duckdb_create_list_type(logicalTypeBase)
+		C.duckdb_destroy_logical_type(&logicalTypeBase)
+		return logicalType, nil
+	}
 
 	// DECIMAL(3,2)
 	if m := decimalRegexp.FindStringSubmatch(sqlType); len(m) == 3 && m[0] == sqlType {
@@ -79,58 +99,24 @@ func createLogicalFromSQLType(sqlType string) (C.duckdb_logical_type, error) {
 		return logical, nil
 	}
 
+	// "anonymous" enum
+	if sqlType == "ENUM" {
+		return createEnum(nil), nil
+	}
+
 	// ENUM('a', 'b')
-	if values, isEnum, err := parseEnum(sqlType); isEnum {
+	if values, isEnum, err := ParseEnum(sqlType); isEnum {
 		if err != nil {
 			return nil, err
 		}
 		return createEnum(values), nil
 	}
 
-	// VARCHAR[]
-	if before, ok := strings.CutSuffix(sqlType, "[]"); ok {
-		logicalTypeBase, err := createLogicalFromSQLType(before)
-		if err != nil {
-			return nil, err
-		}
-		logicalType := C.duckdb_create_list_type(logicalTypeBase)
-		C.duckdb_destroy_logical_type(&logicalTypeBase)
-		return logicalType, nil
-	}
-
 	// primitive types
 	if duckdbType, ok := SQLToDuckDBMap[sqlType]; ok {
-		logicalType := C.duckdb_create_logical_type(duckdbType)
-		return logicalType, nil
+		return C.duckdb_create_logical_type(duckdbType), nil
 	} else {
 		return nil, unsupportedTypeError(sqlType)
-	}
-}
-
-func createLogicalFromGoValue(v any) (C.duckdb_logical_type, error) {
-	if _, ok := v.([]string); ok {
-		typ, err := getDuckdbTypeFromValue("")
-		if err != nil {
-			return nil, err
-		}
-		listTyp := C.duckdb_create_list_type(C.duckdb_create_logical_type(typ))
-		return listTyp, nil
-	} else if _, ok := v.([]uint32); ok {
-		typ, err := getDuckdbTypeFromValue(uint32(0))
-		if err != nil {
-			return nil, err
-		}
-		listTyp := C.duckdb_create_list_type(C.duckdb_create_logical_type(typ))
-		return listTyp, err
-	} else if enum, ok := v.(*Enum); ok {
-		typ := createEnum(enum.Names())
-		return typ, nil
-	} else {
-		typ, err := getDuckdbTypeFromValue(v)
-		if err != nil {
-			return nil, err
-		}
-		return C.duckdb_create_logical_type(typ), nil
 	}
 }
 
