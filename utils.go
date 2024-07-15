@@ -65,7 +65,7 @@ func createLogicalFromSQLType(sqlType string) (C.duckdb_logical_type, error) {
 			if err != nil {
 				return nil, err
 			}
-			logicalType := C.duckdb_create_array_type(logicalTypeBase, C.ulonglong(sz))
+			logicalType := C.duckdb_create_array_type(logicalTypeBase, C.idx_t(sz))
 			C.duckdb_destroy_logical_type(&logicalTypeBase)
 			return logicalType, nil
 		}
