@@ -315,7 +315,6 @@ func getDuckdbTypeFromValueX(v any) C.duckdb_type {
 }
 
 func SqlTypeFromValue(v any) string {
-
 	if _, ok := v.([]string); ok {
 		return "VARCHAR[]"
 	} else if _, ok := v.([]uint32); ok {
@@ -341,22 +340,28 @@ func getDuckdbTypeFromValue(v any) (C.duckdb_type, error) {
 	return x, nil
 }
 
-func getBindValue(t C.duckdb_type, v C.duckdb_value) (any, error) {
-	if v == nil {
-		return "", nil
-	}
-	switch t {
+func getBindValue(typ C.duckdb_type, v C.duckdb_value) (any, error) {
+
+	switch typ {
 	case C.DUCKDB_TYPE_BOOLEAN:
-		if C.duckdb_get_int64(v) != 0 {
+		if v == nil {
+			return false, nil
+		} else if C.duckdb_get_int64(v) != 0 {
 			return true, nil
 		} else {
 			return false, nil
 		}
 	case C.DUCKDB_TYPE_BIGINT:
+		if v == nil {
+			return int64(0), nil
+		}
 		return int64(C.duckdb_get_int64(v)), nil
 	case C.DUCKDB_TYPE_DOUBLE:
 		panic("not implemented")
 	case C.DUCKDB_TYPE_VARCHAR:
+		if v == nil {
+			return "", nil
+		}
 		str := C.duckdb_get_varchar(v)
 		if str == nil {
 			return "", nil

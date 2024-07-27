@@ -55,9 +55,9 @@ func (d *myTableUDF) Bind(namedArgs map[string]any, args []any) (b duckdb.Bindin
 		bVal:   bVal,
 		schema: &duckdb.Table{
 			Columns: []duckdb.ColumnDef{
-				{"userId", int64(0)},
-				{"xxx", strVal},
-				{"b", bVal},
+				{"userId", duckdb.SqlTypeFromValue(int64(0))},
+				{"xxx", duckdb.SqlTypeFromValue(strVal)},
+				{"b", duckdb.SqlTypeFromValue(bVal)},
 			},
 			Cardinality: int(rows),
 			MaxThreads:  12,

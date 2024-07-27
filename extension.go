@@ -45,3 +45,10 @@ func getConn(c any) (*conn, error) {
 		return nil, driver.ErrBadConn
 	}
 }
+
+type t struct {
+}
+
+type Type interface {
+	toSql() string
+}
