@@ -60,17 +60,15 @@ func (r *rows) Columns() []string {
 }
 
 func (r *rows) Next(dst []driver.Value) error {
-
-	for r.rowCount == r.chunk.GetSize() {
+	for r.rowCount == r.chunk.size {
 		r.chunk.close()
 		data := C.duckdb_stream_fetch_chunk(r.res)
 		if data == nil {
 			return io.EOF
 		}
-		if err := r.chunk.initFromDuckDataChunk(data); err != nil {
+		if err := r.chunk.initFromDuckDataChunk(data, false); err != nil {
 			return getError(err, nil)
 		}
-
 		r.chunkIdx++
 		r.rowCount = 0
 	}
