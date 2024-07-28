@@ -3,8 +3,9 @@ package duckdb
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
-	"github.com/cespare/xxhash/v2"
 	"io"
 	"log"
 	"net/http"
@@ -34,7 +35,8 @@ func Install(tag string) error {
 	if tag == "latest" {
 		var h uint64
 		for _, v := range m {
-			h ^= xxhash.Sum64(v)
+			hh := sha1.Sum(v)
+			h ^= binary.LittleEndian.Uint64(hh[:])
 		}
 		dir += fmt.Sprintf("latest_%s_%d", time.Now().Format(time.DateOnly), h&0xffffffff)
 	} else {
