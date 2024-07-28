@@ -3,6 +3,7 @@ package duckdb
 import (
 	"encoding/binary"
 	"github.com/cespare/xxhash"
+	"math"
 	"sync"
 )
 
@@ -13,7 +14,7 @@ type Enum struct {
 }
 
 func (e *Enum) Serialize(b []byte) []byte {
-	for _, v := range e.values {
+	for _, v := range e.Names() {
 		b = binary.AppendUvarint(b, uint64(len(v)))
 		b = append(b, v...)
 	}
@@ -56,6 +57,9 @@ func (e *Enum) add(x uint64, s []byte) uint32 {
 	}
 
 	id := uint32(len(e.values))
+	if id >= math.MaxUint16 {
+		panic("overflow in enum")
+	}
 	v := string(s)
 	e.values = append(e.values, v)
 	e.m[x] = id

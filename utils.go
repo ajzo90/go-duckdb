@@ -13,44 +13,72 @@ import (
 	"strings"
 )
 
-func MapFn[From any, FromColl ~[]From, To any](from FromColl, f func(From) To) []To {
-	var out = make([]To, len(from))
-	for i, v := range from {
-		out[i] = f(v)
+func StringifyEnum(values []string) string {
+	var b = make([]byte, 0, 4096)
+	b = append(b, "ENUM("...)
+	for i, v := range values {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = append(b, '\'')
+		b = append(b, strings.ReplaceAll(v, "'", "''")...)
+		b = append(b, '\'')
 	}
-	return out
+	b = append(b, ')')
+	return string(b)
 }
 
-func StringifyEnum(values []string) string {
-	return "ENUM(" + strings.Join(MapFn(values, func(s string) string {
-		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-	}), ", ") + ")"
+func parseEnum(in string) ([]string, bool, error) {
+	var enum = in
+	var arr []string
+	for {
+		enum = strings.TrimLeft(enum, " ")
+		firstIdx := strings.IndexByte(enum, '\'')
+		if firstIdx != 0 {
+			return nil, true, fmt.Errorf("invalid %v", enum)
+		}
+		enum = enum[1:]
+		init := enum
+
+	next:
+		nextIdx := strings.IndexByte(enum, '\'')
+		if nextIdx == -1 {
+			return nil, true, fmt.Errorf("expect ' here")
+		} else if nextIdx+1 < len(enum) && enum[nextIdx+1] == '\'' {
+			enum = enum[nextIdx+2:]
+			goto next
+		}
+		enum = enum[nextIdx+1:]
+		s := init[:len(init)-len(enum)-1]
+		s = strings.ReplaceAll(s, "''", "'")
+		for _, v := range arr {
+			if v == s {
+				return nil, true, fmt.Errorf("enum contains duplicate values '%s'", v)
+			}
+		}
+
+		arr = append(arr, s)
+		enum = strings.TrimLeft(enum, " ")
+		if len(enum) == 0 {
+			return arr, true, nil
+		} else if enum[0] != ',' {
+			return nil, true, fmt.Errorf("expect , here [%s]", enum)
+		}
+		enum = enum[1:]
+	}
 }
 
 func ParseEnum(s string) ([]string, bool, error) {
-	if after, ok := strings.CutPrefix(s, "ENUM("); ok {
-		if enum, ok := strings.CutSuffix(after, ")"); ok {
-			var values []string
-			parts := strings.Split(enum, ",")
-			for _, p := range parts {
-				p = strings.TrimSpace(p)
-				if len(p) >= 2 && p[0] == '\'' && p[len(p)-1] == '\'' {
-					x := p[1 : len(p)-1]
-					x = strings.ReplaceAll(x, "''", "'")
-					values = append(values, x)
-				} else {
-					return nil, true, fmt.Errorf("invalid ENUM value: %s", p)
-				}
-			}
-			return values, true, nil
-		}
+	var prefix = "ENUM("
+	if len(s) > len(prefix) && strings.EqualFold(s[:len(prefix)], prefix) && s[len(s)-1] == ')' {
+		return parseEnum(s[len(prefix) : len(s)-1])
 	}
 	return nil, false, nil
 }
 
-func createLogicalFromSQLType(sqlType string) (C.duckdb_logical_type, error) {
+func createLogicalFromSQLType(origType string) (C.duckdb_logical_type, error) {
 
-	sqlType = strings.ToUpper(strings.ReplaceAll(sqlType, " ", ""))
+	sqlType := strings.ToUpper(strings.ReplaceAll(origType, " ", ""))
 
 	// STRUCT(v VARCHAR, i INTEGER)
 	if strings.HasPrefix(sqlType, "STRUCT(") {
@@ -112,7 +140,7 @@ func createLogicalFromSQLType(sqlType string) (C.duckdb_logical_type, error) {
 	}
 
 	// ENUM('a', 'b')
-	if values, isEnum, err := ParseEnum(sqlType); isEnum {
+	if values, isEnum, err := ParseEnum(origType); isEnum {
 		if err != nil {
 			return nil, err
 		}
