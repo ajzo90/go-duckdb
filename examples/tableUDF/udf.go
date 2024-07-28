@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/cespare/xxhash"
 	"github.com/marcboeker/go-duckdb"
 	"log"
 	"reflect"
@@ -150,6 +151,24 @@ func (schema *schema) InitScanner(vecSize int, projection []int) (scanner duckdb
 	return s
 }
 
+type Xxhash64Fn struct {
+}
+
+func (h Xxhash64Fn) Config() duckdb.ScalarFunctionConfig {
+	return duckdb.ScalarFunctionConfig{
+		InputTypes: []string{`VARCHAR`},
+		ResultType: `UBIGINT`,
+	}
+}
+
+func (h Xxhash64Fn) Exec(in *duckdb.UDFDataChunk, out *duckdb.Vector) error {
+	strVec, _ := duckdb.GetVector[duckdb.Varchar](in, 0)
+	for _, v := range strVec {
+		duckdb.Append(out, xxhash.Sum64(v.Bytes()))
+	}
+	return fmt.Errorf("i am not ready")
+}
+
 func main() {
 	db, err := sql.Open("duckdb", "?access_mode=READ_WRITE")
 	if err != nil {
@@ -160,11 +179,17 @@ func main() {
 
 	check(duckdb.RegisterTableUDF(conn, "range2", newMyTableUDF()))
 	check(db.Ping())
+	check(db.Exec("INSTALL https; LOAD httpfs;"))
+
 	t0 := time.Now()
 	defer func() {
 		fmt.Println(time.Since(t0))
 	}()
-	const q = `SELECT xxx, len(xxx), count(userId) FROM range2(100000000, $str, $bbb) where userId=$user group by xxx`
+
+	err = duckdb.RegisterScalarUDF(conn, "xxhash64", Xxhash64Fn{})
+	check(err)
+
+	const q = `SELECT *, xxhash64(extension_name) from duckdb_extensions() where extension_name = 'httpfs'`
 
 	rows, err := db.QueryContext(context.Background(), q, sql.Named("str", ""), sql.Named("bbb", true), sql.Named("user", 1))
 	check(err)
