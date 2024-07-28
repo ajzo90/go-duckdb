@@ -1,7 +1,7 @@
 package duckdb
 
 import (
-	"github.com/matryer/is"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -13,9 +13,7 @@ func TestParseEnum(t *testing.T) {
 
 func testEnum(t *testing.T, in string, exp []string) {
 	res, isEnum, err := ParseEnum(in)
-	is := is.New(t)
-	is.NoErr(err)
-	is.True(isEnum)
-	is.Equal(res, exp)
-
+	require.NoError(t, err)
+	require.True(t, isEnum)
+	require.Equal(t, res, exp)
 }
