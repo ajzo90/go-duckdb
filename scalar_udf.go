@@ -1,4 +1,4 @@
-//go:build duckdb_scalar_udf
+//go:build !no_duckdb_scalar_udf
 
 package duckdb
 

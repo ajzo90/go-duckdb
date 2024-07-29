@@ -16,11 +16,12 @@ type UDFDataChunk struct {
 }
 
 type Vector struct {
-	vector   C.duckdb_vector
-	childVec *Vector
-	pos      int
-	data     unsafe.Pointer
-	bitmask  *C.uint64_t
+	vector       C.duckdb_vector
+	childVec     *Vector
+	pos          int
+	listCapacity int
+	data         unsafe.Pointer
+	bitmask      *C.uint64_t
 }
 
 func AppendUUID(d *Vector, v []byte) {
@@ -62,11 +63,20 @@ func chunkSize(chunk C.duckdb_data_chunk) int {
 }
 
 func (d *Vector) SetListSize(newLength int) {
+	if d.childVec.listCapacity < newLength {
+		d.ReserveListSize(max(newLength, 2048, d.childVec.listCapacity*2))
+	}
 	C.duckdb_list_vector_set_size(d.vector, C.idx_t(newLength))
 }
 
-func (d *Vector) ReserveListSize(newLength int) {
-	C.duckdb_list_vector_reserve(d.vector, C.idx_t(newLength))
+func (d *Vector) ReserveListSize(newCapacity int) {
+	if newCapacity < d.listCapacity {
+		return
+	}
+	C.duckdb_list_vector_reserve(d.vector, C.idx_t(newCapacity))
+	d.childVec.listCapacity = newCapacity
+	d.childVec.data = C.duckdb_vector_get_data(d.childVec.vector)
+	d.childVec.bitmask = C.duckdb_vector_get_validity(d.childVec.vector)
 }
 
 func (d *Vector) AppendListEntry(n int) {
@@ -88,7 +98,7 @@ func AppendMany[T validTypes](vec *Vector, v []T) {
 }
 
 func rawCopy[T any](vec *Vector, v []T) int {
-	return copy(vectorData[T](vec), v)
+	return copy(vectorData[T](vec)[vec.pos:], v)
 }
 
 func (d *Vector) init(sz int, v C.duckdb_vector, writable bool) {
@@ -96,6 +106,7 @@ func (d *Vector) init(sz int, v C.duckdb_vector, writable bool) {
 	duckdbType := C.duckdb_get_type_id(logicalType)
 	C.duckdb_destroy_logical_type(&logicalType)
 	d.pos = 0
+	d.listCapacity = 0
 	d.vector = v
 	d.data = C.duckdb_vector_get_data(v)
 
