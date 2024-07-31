@@ -10,11 +10,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #pragma once
 #define DUCKDB_AMALGAMATION 1
-#define DUCKDB_SOURCE_ID "c76e485b52"
-#define DUCKDB_VERSION "v1.0.1-dev3404"
+#define DUCKDB_SOURCE_ID "e829a92d64"
+#define DUCKDB_VERSION "v1.0.1-dev3503"
 #define DUCKDB_MAJOR_VERSION 1
 #define DUCKDB_MINOR_VERSION 0
-#define DUCKDB_PATCH_VERSION "1-dev3404"
+#define DUCKDB_PATCH_VERSION "1-dev3503"
 //===----------------------------------------------------------------------===//
 //                         DuckDB
 //
@@ -3070,13 +3070,33 @@ TO NumericCast(FROM val) {
 }
 
 template <class TO>
-TO NumericCast(double val) {
+TO LossyNumericCast(double val) {
 	return static_cast<TO>(val);
 }
 
 template <class TO>
-TO NumericCast(float val) {
+TO LossyNumericCast(float val) {
 	return static_cast<TO>(val);
+}
+
+template <class TO>
+TO NumericCast(double val) {
+	auto res = LossyNumericCast<TO>(val);
+	if (val != double(res)) {
+		throw InternalException("Information loss on integer cast: value %lf outside of target range [%lf, %lf]", val,
+		                        double(res), double(res));
+	}
+	return res;
+}
+
+template <class TO>
+TO NumericCast(float val) {
+	auto res = LossyNumericCast<TO>(val);
+	if (val != float(res)) {
+		throw InternalException("Information loss on integer cast: value %f outside of target range [%f, %f]", val,
+		                        float(res), float(res));
+	}
+	return res;
 }
 
 template <class TO, class FROM>
@@ -3089,11 +3109,17 @@ TO UnsafeNumericCast(FROM in) {
 
 template <class TO>
 TO UnsafeNumericCast(double val) {
+#ifdef DEBUG
+	return LossyNumericCast<TO>(val);
+#endif
 	return NumericCast<TO>(val);
 }
 
 template <class TO>
 TO UnsafeNumericCast(float val) {
+#ifdef DEBUG
+	return LossyNumericCast<TO>(val);
+#endif
 	return NumericCast<TO>(val);
 }
 
@@ -3193,7 +3219,7 @@ public:
 	}
 	static char CharacterToLower(char c) {
 		if (c >= 'A' && c <= 'Z') {
-			return c - ('A' - 'a');
+			return UnsafeNumericCast<char>(c - ('A' - 'a'));
 		}
 		return c;
 	}
@@ -4527,8 +4553,8 @@ public:
 	DUCKDB_API static Value Numeric(const LogicalType &type, hugeint_t value);
 	DUCKDB_API static Value Numeric(const LogicalType &type, uhugeint_t value);
 
-	//! Create a tinyint Value from a specified value
-	DUCKDB_API static Value BOOLEAN(int8_t value);
+	//! Create a boolean Value from a specified value
+	DUCKDB_API static Value BOOLEAN(bool value);
 	//! Create a tinyint Value from a specified value
 	DUCKDB_API static Value TINYINT(int8_t value);
 	//! Create a smallint Value from a specified value
@@ -4746,7 +4772,7 @@ private:
 
 	//! The value of the object, if it is of a constant size Type
 	union Val {
-		int8_t boolean;
+		bool boolean;
 		int8_t tinyint;
 		int16_t smallint;
 		int32_t integer;
@@ -24948,6 +24974,14 @@ Sets the NULL handling of the scalar function to SPECIAL_HANDLING.
 DUCKDB_API void duckdb_scalar_function_set_special_handling(duckdb_scalar_function scalar_function);
 
 /*!
+Sets the Function Stability of the scalar function to VOLATILE, indicating the function should be re-run for every row.
+This limits optimization that can be performed for the function.
+
+* scalar_function: The scalar function
+*/
+DUCKDB_API void duckdb_scalar_function_set_volatile(duckdb_scalar_function function);
+
+/*!
 Adds a parameter to the scalar function.
 
 * @param scalar_function The scalar function.
@@ -25365,55 +25399,56 @@ DUCKDB_API void duckdb_replacement_scan_set_error(duckdb_replacement_scan_info i
 //===--------------------------------------------------------------------===//
 
 /*!
-Returns the root node from the profiling information. Returns NULL if profiling is not enabled
-
-* @param connection A connection object
-* @return A profiling information object
-*/
+ * Returns the root node of the profiling information. Returns nullptr, if profiling is not enabled.
+ *
+ * @param connection A connection object.
+ * @return A profiling information object.
+ */
 DUCKDB_API duckdb_profiling_info duckdb_get_profiling_info(duckdb_connection connection);
 
 /*!
-Returns the value of the setting key of the current profiling info node. If the setting does not exist or is not
-enabled, nullptr is returned.
-
-* @param info A profiling information object
-* @param key The name of the metric setting to return the value for
-* @return The value of the metric setting. Must be freed with `duckdb_free`.
-*/
-DUCKDB_API const char *duckdb_profiling_info_get_value(duckdb_profiling_info info, const char *key);
+ * Returns the value of the metric of the current profiling info node. Returns nullptr, if the metric does
+ * not exist or is not enabled. Currently, the value holds a string, and you can retrieve the string
+ * by calling the corresponding function: char *duckdb_get_varchar(duckdb_value value).
+ *
+ * @param info A profiling information object.
+ * @param key The name of the requested metric.
+ * @return The value of the metric. Must be freed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_profiling_info_get_value(duckdb_profiling_info info, const char *key);
 
 /*!
-Returns the number of children in the current profiling info node.
-
-* @param info A profiling information object
-* @return The number of children in the current node
-*/
+ * Returns the number of children in the current profiling info node.
+ *
+ * @param info A profiling information object.
+ * @return The number of children in the current node.
+ */
 DUCKDB_API idx_t duckdb_profiling_info_get_child_count(duckdb_profiling_info info);
 
 /*!
-Returns the child node at the specified index.
-
-* @param info A profiling information object
-* @param index The index of the child node to return
-* @return The child node at the specified index
-*/
+ * Returns the child node at the specified index.
+ *
+ * @param info A profiling information object.
+ * @param index The index of the child node.
+ * @return The child node at the specified index.
+ */
 DUCKDB_API duckdb_profiling_info duckdb_profiling_info_get_child(duckdb_profiling_info info, idx_t index);
 
 /*! Returns the operator name of the current profiling info node, if the node is an Operator Node.
  *
- * @param info A profiling information object
- * @return The name of the operator of the current node. Returns a nullptr if the node is not an Operator Node. The
+ * @param info A profiling information object.
+ * @return The name of the operator of the current node. Returns nullptr, if the node is not an Operator Node. The
  * result must be freed with `duckdb_free`.
  */
 DUCKDB_API const char *duckdb_profiling_info_get_name(duckdb_profiling_info info);
 
 /*!
-Returns the query of the current profiling info node, if the node the query root node.
-
-* @param info A profiling information object
-* @return The query of the current node. Returns a nullptr if the node is not a Query Node. The result must be freed
-with `duckdb_free`.
-*/
+ * Returns the query of the current profiling info node, if the node is the root.
+ *
+ * @param info A profiling information object.
+ * @return The query of the current node. Returns nullptr, if the node is not the root. The result must be freed
+ * with `duckdb_free`.
+ */
 DUCKDB_API const char *duckdb_profiling_info_get_query(duckdb_profiling_info info);
 
 //===--------------------------------------------------------------------===//
