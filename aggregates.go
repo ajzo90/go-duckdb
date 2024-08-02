@@ -35,6 +35,7 @@ type AggregateFunction[StateType any] interface {
 	Update([]*StateType, *UDFDataChunk)
 	Combine(source, target []*StateType)
 	Finalize([]*StateType, *Vector)
+	Destroy([]*StateType)
 }
 
 type aggFuncInternal struct {
@@ -42,6 +43,7 @@ type aggFuncInternal struct {
 	updateFn   func(input C.duckdb_data_chunk, states *C.duckdb_aggregate_state)
 	combineFn  func(source *C.duckdb_aggregate_state, target *C.duckdb_aggregate_state, count C.idx_t)
 	finalizeFn func(source *C.duckdb_aggregate_state, result C.duckdb_vector, count C.idx_t, offset C.idx_t)
+	destroyFn  func(source *C.duckdb_aggregate_state, count C.idx_t)
 	size       int
 }
 
@@ -68,7 +70,8 @@ func go_duckdb_aggregate_init(info C.duckdb_function_info, state C.duckdb_aggreg
 
 //export go_duckdb_aggregate_destroy
 func go_duckdb_aggregate_destroy(states *C.duckdb_aggregate_state, count C.idx_t) {
-
+	//var info C.duckdb_function_info // todo: need duckdb_function_info to locate the destroy function to run
+	//internal(info).destroyFn(states, count)
 }
 
 //export go_duckdb_aggregate_delete_callback
@@ -166,6 +169,10 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 			var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))
 
 			f.Finalize(s[offset:][:count], resVec)
+		},
+		destroyFn: func(source *C.duckdb_aggregate_state, count C.idx_t) {
+			var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))
+			f.Destroy(s[:int(count)])
 		},
 	}
 

@@ -29,10 +29,10 @@ func TestRegisterAggregate(t *testing.T) {
 	db := sql.OpenDB(connector)
 
 	var res uint64
-	is.NoErr(db.QueryRow("select my_weighted_sum(40,2)").Scan(&res))
+	is.NoErr(db.QueryRow("select my_weighted_sum(distinct 40,2)").Scan(&res))
 	is.Equal(uint64(80), res)
 
-	is.NoErr(db.QueryRow("SELECT my_weighted_sum(i, 2) FROM range(100) t(i)").Scan(&res))
+	is.NoErr(db.QueryRow("SELECT my_weighted_sum(distinct i, 2) FROM range(100) t(i)").Scan(&res))
 	is.Equal(uint64(9900), res)
 
 	//var b bool
@@ -62,6 +62,9 @@ type MyWeightedSumAggregate struct {
 
 func (m MyWeightedSumAggregate) Init(state *MyWeightedSumState) {
 	*state = MyWeightedSumState{Sum: 0}
+}
+
+func (m MyWeightedSumAggregate) Destroy(aggs []*MyWeightedSumState) {
 }
 
 func (m MyWeightedSumAggregate) Update(aggs []*MyWeightedSumState, ch *UDFDataChunk) {
@@ -139,4 +142,7 @@ func (m MyArraySum) Finalize(states []*MyArraySumState, out *Vector) {
 			row[j] = states[i][j]
 		}
 	}
+}
+
+func (m MyArraySum) Destroy(aggs []*MyArraySumState) {
 }

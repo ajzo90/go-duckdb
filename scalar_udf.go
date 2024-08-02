@@ -24,8 +24,9 @@ import (
 )
 
 type ScalarFunctionConfig struct {
-	InputTypes []string
-	ResultType string
+	InputTypes      []string
+	ResultType      string
+	SpecialHandling bool
 }
 
 type ScalarFunction interface {
