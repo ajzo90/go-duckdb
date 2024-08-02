@@ -27,12 +27,12 @@ type AggregateFunctionConfig struct {
 	ResultType string
 }
 
-type AggregateFunction[StateType, ResultType any] interface {
+type AggregateFunction[StateType any] interface {
 	Config() AggregateFunctionConfig
 	Init(*StateType)
 	Update([]*StateType, *UDFDataChunk)
 	Combine(source, target []*StateType)
-	Finalize(*StateType) ResultType
+	Finalize([]*StateType, *Vector)
 }
 
 type aggFuncInternal struct {
@@ -78,7 +78,7 @@ func go_duckdb_aggregate_finalize(info C.duckdb_function_info, source *C.duckdb_
 	internal(info).finalizeFn(source, result, count, offset)
 }
 
-func RegisterAggregateUDFConn[StateType, ResultType any](c driver.Conn, name string, f AggregateFunction[StateType, ResultType]) error {
+func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f AggregateFunction[StateType]) error {
 	duckConn, err := getConn(c)
 	if err != nil {
 		return err
@@ -147,11 +147,8 @@ func RegisterAggregateUDFConn[StateType, ResultType any](c driver.Conn, name str
 			releaseVector(resVec)
 
 			var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))
-			vv := vectorData[ResultType](resVec)[offset:]
 
-			for i := 0; i < int(count); i++ {
-				vv[i] = f.Finalize(s[i])
-			}
+			f.Finalize(s[offset:][:count], resVec)
 		},
 	}
 

@@ -23,7 +23,8 @@ func TestRegisterAggregate(t *testing.T) {
 
 	is := is.New(t)
 
-	is.NoErr(RegisterAggregateUDFConn[MyWeightedSumState, int64](conn, "my_weighted_sum", MyWeightedSumAggregate{}))
+	is.NoErr(RegisterAggregateUDFConn[MyWeightedSumState](conn, "my_weighted_sum", MyWeightedSumAggregate{}))
+	is.NoErr(RegisterAggregateUDFConn[MyArraySumState](conn, "array32_sum", MyArraySum{}))
 
 	db := sql.OpenDB(connector)
 
@@ -34,7 +35,19 @@ func TestRegisterAggregate(t *testing.T) {
 	is.NoErr(db.QueryRow("SELECT my_weighted_sum(i, 2) FROM range(100) t(i)").Scan(&res))
 	is.Equal(uint64(9900), res)
 
+	//is.NoErr(db.QueryRow("SELECT my_weighted_sum(i, 2) FROM range(100*1000*1000) t(i)").Scan(&res))
+	//is.Equal(uint64(999999999000000000), res)
+
+	var f0, f1, f2, f3 float32
+	is.NoErr(db.QueryRow("SELECT a[1], a[2], a[3], a[4] from (select array32_sum([1,2,3,i]::float[4]) AS a FROM range(100) t(i))").Scan(&f0, &f1, &f2, &f3))
+	is.Equal(float32(100), f0)
+	is.Equal(float32(200), f1)
+	is.Equal(float32(300), f2)
+	is.Equal(float32(4950), f3)
+
 }
+
+// WEIGHTED SUM DEFINITION
 
 type MyWeightedSumState struct {
 	Sum int64
@@ -69,6 +82,57 @@ func (m MyWeightedSumAggregate) Config() AggregateFunctionConfig {
 	}
 }
 
-func (m MyWeightedSumAggregate) Finalize(state *MyWeightedSumState) int64 {
-	return state.Sum
+func (m MyWeightedSumAggregate) Finalize(states []*MyWeightedSumState, out *Vector) {
+	vv := vectorData[int64](out)
+	for i := range states {
+		vv[i] = states[i].Sum
+	}
+}
+
+// ARRAY SUM DEFINITION
+type MyArraySum struct {
+}
+
+type MyArraySumState [4]float32
+
+func (m MyArraySum) Config() AggregateFunctionConfig {
+	return AggregateFunctionConfig{
+		InputTypes: []string{"FLOAT[4]"},
+		ResultType: "FLOAT[4]",
+	}
+}
+
+func (m MyArraySum) Init(stateType *MyArraySumState) {
+	clear(stateType[:])
+}
+
+func (m MyArraySum) Update(aggs []*MyArraySumState, chunk *UDFDataChunk) {
+	x := ArrayType[float32]{}
+	_ = x.Load(chunk, 0)
+
+	for i := range aggs {
+		row := x.GetRow(i)
+		for j := range row {
+			aggs[i][j] += row[j]
+		}
+	}
+}
+
+func (m MyArraySum) Combine(source, target []*MyArraySumState) {
+	for i := range source {
+		for j := range source[i] {
+			target[i][j] += source[i][j]
+		}
+	}
+}
+
+func (m MyArraySum) Finalize(states []*MyArraySumState, out *Vector) {
+	x := ArrayType[float32]{}
+	x.load(out.vector, len(states))
+	for i := range states {
+		row := x.GetRow(i)
+		for j := range row {
+			row[j] = states[i][j]
+		}
+	}
 }
