@@ -23,7 +23,7 @@ func TestRegisterAggregate(t *testing.T) {
 
 	is := is.New(t)
 
-	is.NoErr(RegisterAggregateUDFConn(conn, "my_weighted_sum", 1))
+	is.NoErr(RegisterAggregateUDFConn[MyWeightedSumState, int64](conn, "my_weighted_sum", MyWeightedSumAggregate{}))
 
 	db := sql.OpenDB(connector)
 
@@ -34,4 +34,41 @@ func TestRegisterAggregate(t *testing.T) {
 	is.NoErr(db.QueryRow("SELECT my_weighted_sum(i, 2) FROM range(100) t(i)").Scan(&res))
 	is.Equal(uint64(9900), res)
 
+}
+
+type MyWeightedSumState struct {
+	Sum int64
+}
+
+type MyWeightedSumAggregate struct {
+}
+
+func (m MyWeightedSumAggregate) Init(state *MyWeightedSumState) {
+	*state = MyWeightedSumState{Sum: 0}
+}
+
+func (m MyWeightedSumAggregate) Update(aggs []*MyWeightedSumState, ch *UDFDataChunk) {
+	inputData, _ := GetVector[int64](ch, 0)
+	weightData, _ := GetVector[int64](ch, 1)
+
+	for i := range aggs {
+		aggs[i].Sum += inputData[i] * weightData[i]
+	}
+}
+
+func (m MyWeightedSumAggregate) Combine(s, t []*MyWeightedSumState) {
+	for i := range s {
+		t[i].Sum += s[i].Sum
+	}
+}
+
+func (m MyWeightedSumAggregate) Config() AggregateFunctionConfig {
+	return AggregateFunctionConfig{
+		InputTypes: []string{"BIGINT", "BIGINT"},
+		ResultType: "BIGINT",
+	}
+}
+
+func (m MyWeightedSumAggregate) Finalize(state *MyWeightedSumState) int64 {
+	return state.Sum
 }
