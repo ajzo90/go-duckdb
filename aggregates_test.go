@@ -35,8 +35,12 @@ func TestRegisterAggregate(t *testing.T) {
 	is.NoErr(db.QueryRow("SELECT my_weighted_sum(i, 2) FROM range(100) t(i)").Scan(&res))
 	is.Equal(uint64(9900), res)
 
-	//is.NoErr(db.QueryRow("SELECT my_weighted_sum(i, 2) FROM range(100*1000*1000) t(i)").Scan(&res))
-	//is.Equal(uint64(999999999000000000), res)
+	//var b bool
+	//is.NoErr(db.QueryRow("SELECT my_weighted_sum(NULL, 2) is null").Scan(&b))
+	//is.Equal(true, b)
+
+	is.NoErr(db.QueryRow("SELECT my_weighted_sum(i, 2) FROM range(100*1000*1000) t(i)").Scan(&res))
+	is.Equal(uint64(9999999900000000), res)
 
 	var f0, f1, f2, f3 float32
 	is.NoErr(db.QueryRow("SELECT a[1], a[2], a[3], a[4] from (select array32_sum([1,2,3,i]::float[4]) AS a FROM range(100) t(i))").Scan(&f0, &f1, &f2, &f3))
@@ -128,7 +132,7 @@ func (m MyArraySum) Combine(source, target []*MyArraySumState) {
 
 func (m MyArraySum) Finalize(states []*MyArraySumState, out *Vector) {
 	x := ArrayType[float32]{}
-	x.load(out.vector, len(states))
+	_ = x.LoadVec(out, len(states))
 	for i := range states {
 		row := x.GetRow(i)
 		for j := range row {

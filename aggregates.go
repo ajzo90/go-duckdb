@@ -18,13 +18,15 @@ import "C"
 
 import (
 	"database/sql/driver"
+	"fmt"
 	"strings"
 	"unsafe"
 )
 
 type AggregateFunctionConfig struct {
-	InputTypes []string
-	ResultType string
+	InputTypes      []string
+	ResultType      string
+	SpecialHandling bool
 }
 
 type AggregateFunction[StateType any] interface {
@@ -46,6 +48,12 @@ type aggFuncInternal struct {
 //export go_duckdb_aggregate_state_size
 func go_duckdb_aggregate_state_size(info C.duckdb_function_info) C.idx_t {
 	return C.idx_t(internal(info).size)
+}
+
+func go_duckdb_aggregate_set_error(info C.duckdb_function_info, err error) {
+	errstr := C.CString(err.Error())
+	C.duckdb_aggregate_function_set_error(info, errstr)
+	C.free(unsafe.Pointer(errstr))
 }
 
 func internal(info C.duckdb_function_info) *aggFuncInternal {
@@ -112,6 +120,10 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 	C.duckdb_aggregate_function_set_return_type(function, logicalType)
 	C.duckdb_destroy_logical_type(&logicalType)
 
+	if conf.SpecialHandling {
+		C.duckdb_aggregate_function_set_special_handling(function)
+	}
+
 	C.duckdb_aggregate_function_set_functions(function,
 		C.duckdb_aggregate_state_size(C.go_duckdb_aggregate_state_size),
 		C.duckdb_aggregate_init_t(C.go_duckdb_aggregate_init),
@@ -155,8 +167,8 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 	C.duckdb_aggregate_function_set_extra_info(function, cMem.store(internal), C.duckdb_delete_callback_t(C.free)) // todo: fix cb
 
 	status := C.duckdb_register_aggregate_function(duckConn.duckdbCon, function)
-	if status != 0 {
-		panic(status)
+	if status != C.DuckDBSuccess {
+		return fmt.Errorf("failed to register aggregate function")
 	}
 
 	return nil

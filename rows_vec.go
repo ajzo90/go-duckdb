@@ -222,6 +222,10 @@ func (a *ArrayType[T]) load(vector C.duckdb_vector, numValues int) error {
 	return err
 }
 
+func (a *ArrayType[T]) LoadVec(v *Vector, size int) error {
+	return a.load(v.vector, size)
+}
+
 func (a *ArrayType[T]) Load(ch *UDFDataChunk, colIdx int) error {
 	vector := C.duckdb_data_chunk_get_vector(ch.chunk, C.idx_t(colIdx))
 	return a.load(vector, ch.NumValues())
