@@ -11,7 +11,7 @@ void go_duckdb_aggregate_destroy(duckdb_aggregate_state *states, idx_t count);
 void go_duckdb_aggregate_update(duckdb_function_info info, duckdb_data_chunk input, duckdb_aggregate_state *states);
 void go_duckdb_aggregate_combine(duckdb_function_info info, duckdb_aggregate_state *source, duckdb_aggregate_state *target, idx_t count);
 void go_duckdb_aggregate_finalize(duckdb_function_info info, duckdb_aggregate_state *source, duckdb_vector result, idx_t count, idx_t offset);
-
+void go_duckdb_aggregate_delete_callback(void *);
 
 */
 import "C"
@@ -69,6 +69,11 @@ func go_duckdb_aggregate_init(info C.duckdb_function_info, state C.duckdb_aggreg
 //export go_duckdb_aggregate_destroy
 func go_duckdb_aggregate_destroy(states *C.duckdb_aggregate_state, count C.idx_t) {
 
+}
+
+//export go_duckdb_aggregate_delete_callback
+func go_duckdb_aggregate_delete_callback(data unsafe.Pointer) {
+	cMem.free((*ref)(data))
 }
 
 //export go_duckdb_aggregate_update
@@ -164,7 +169,7 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 		},
 	}
 
-	C.duckdb_aggregate_function_set_extra_info(function, cMem.store(internal), C.duckdb_delete_callback_t(C.free)) // todo: fix cb
+	C.duckdb_aggregate_function_set_extra_info(function, cMem.store(internal), C.duckdb_delete_callback_t(C.go_duckdb_aggregate_delete_callback))
 
 	status := C.duckdb_register_aggregate_function(duckConn.duckdbCon, function)
 	if status != C.DuckDBSuccess {
