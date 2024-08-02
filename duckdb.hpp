@@ -10,11 +10,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #pragma once
 #define DUCKDB_AMALGAMATION 1
-#define DUCKDB_SOURCE_ID "c76e485b52"
-#define DUCKDB_VERSION "v1.0.1-dev3404"
+#define DUCKDB_SOURCE_ID "e42a9f4279"
+#define DUCKDB_VERSION "v1.0.1-dev3700"
 #define DUCKDB_MAJOR_VERSION 1
 #define DUCKDB_MINOR_VERSION 0
-#define DUCKDB_PATCH_VERSION "1-dev3404"
+#define DUCKDB_PATCH_VERSION "1-dev3700"
 //===----------------------------------------------------------------------===//
 //                         DuckDB
 //
@@ -3070,13 +3070,33 @@ TO NumericCast(FROM val) {
 }
 
 template <class TO>
-TO NumericCast(double val) {
+TO LossyNumericCast(double val) {
 	return static_cast<TO>(val);
 }
 
 template <class TO>
-TO NumericCast(float val) {
+TO LossyNumericCast(float val) {
 	return static_cast<TO>(val);
+}
+
+template <class TO>
+TO NumericCast(double val) {
+	auto res = LossyNumericCast<TO>(val);
+	if (val != double(res)) {
+		throw InternalException("Information loss on double cast: value %lf outside of target range [%lf, %lf]", val,
+		                        double(res), double(res));
+	}
+	return res;
+}
+
+template <class TO>
+TO NumericCast(float val) {
+	auto res = LossyNumericCast<TO>(val);
+	if (val != float(res)) {
+		throw InternalException("Information loss on float cast: value %f outside of target range [%f, %f]", val,
+		                        float(res), float(res));
+	}
+	return res;
 }
 
 template <class TO, class FROM>
@@ -3089,11 +3109,17 @@ TO UnsafeNumericCast(FROM in) {
 
 template <class TO>
 TO UnsafeNumericCast(double val) {
+#ifdef DEBUG
+	return LossyNumericCast<TO>(val);
+#endif
 	return NumericCast<TO>(val);
 }
 
 template <class TO>
 TO UnsafeNumericCast(float val) {
+#ifdef DEBUG
+	return LossyNumericCast<TO>(val);
+#endif
 	return NumericCast<TO>(val);
 }
 
@@ -3193,7 +3219,7 @@ public:
 	}
 	static char CharacterToLower(char c) {
 		if (c >= 'A' && c <= 'Z') {
-			return c - ('A' - 'a');
+			return UnsafeNumericCast<char>(c - ('A' - 'a'));
 		}
 		return c;
 	}
@@ -4527,8 +4553,8 @@ public:
 	DUCKDB_API static Value Numeric(const LogicalType &type, hugeint_t value);
 	DUCKDB_API static Value Numeric(const LogicalType &type, uhugeint_t value);
 
-	//! Create a tinyint Value from a specified value
-	DUCKDB_API static Value BOOLEAN(int8_t value);
+	//! Create a boolean Value from a specified value
+	DUCKDB_API static Value BOOLEAN(bool value);
 	//! Create a tinyint Value from a specified value
 	DUCKDB_API static Value TINYINT(int8_t value);
 	//! Create a smallint Value from a specified value
@@ -4746,7 +4772,7 @@ private:
 
 	//! The value of the object, if it is of a constant size Type
 	union Val {
-		int8_t boolean;
+		bool boolean;
 		int8_t tinyint;
 		int16_t smallint;
 		int32_t integer;
@@ -4965,6 +4991,8 @@ template <>
 DUCKDB_API date_t Value::GetValue() const;
 template <>
 DUCKDB_API dtime_t Value::GetValue() const;
+template <>
+DUCKDB_API dtime_tz_t Value::GetValue() const;
 template <>
 DUCKDB_API timestamp_t Value::GetValue() const;
 template <>
@@ -13547,9 +13575,9 @@ struct WindowPartitionInput {
 };
 
 //! The type used for sizing hashed aggregate function states
-typedef idx_t (*aggregate_size_t)();
+typedef idx_t (*aggregate_size_t)(const AggregateFunction &function);
 //! The type used for initializing hashed aggregate function states
-typedef void (*aggregate_initialize_t)(data_ptr_t state);
+typedef void (*aggregate_initialize_t)(const AggregateFunction &function, data_ptr_t state);
 //! The type used for updating hashed aggregate functions
 typedef void (*aggregate_update_t)(Vector inputs[], AggregateInputData &aggr_input_data, idx_t input_count,
                                    Vector &state, idx_t count);
@@ -13583,6 +13611,21 @@ typedef void (*aggregate_wininit_t)(AggregateInputData &aggr_input_data, const W
 typedef void (*aggregate_serialize_t)(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
                                       const AggregateFunction &function);
 typedef unique_ptr<FunctionData> (*aggregate_deserialize_t)(Deserializer &deserializer, AggregateFunction &function);
+
+struct AggregateFunctionInfo {
+	DUCKDB_API virtual ~AggregateFunctionInfo();
+
+	template <class TARGET>
+	TARGET &Cast() {
+		DynamicCastCheck<TARGET>(this);
+		return reinterpret_cast<TARGET &>(*this);
+	}
+	template <class TARGET>
+	const TARGET &Cast() const {
+		DynamicCastCheck<TARGET>(this);
+		return reinterpret_cast<const TARGET &>(*this);
+	}
+};
 
 class AggregateFunction : public BaseScalarFunction { // NOLINT: work-around bug in clang-tidy
 public:
@@ -13667,6 +13710,8 @@ public:
 	aggregate_deserialize_t deserialize;
 	//! Whether or not the aggregate is order dependent
 	AggregateOrderDependent order_dependent;
+	//! Additional function info, passed to the bind
+	shared_ptr<AggregateFunctionInfo> function_info;
 
 	bool operator==(const AggregateFunction &rhs) const {
 		return state_size == rhs.state_size && initialize == rhs.initialize && update == rhs.update &&
@@ -13716,12 +13761,12 @@ public:
 
 public:
 	template <class STATE>
-	static idx_t StateSize() {
+	static idx_t StateSize(const AggregateFunction &) {
 		return sizeof(STATE);
 	}
 
 	template <class STATE, class OP>
-	static void StateInitialize(data_ptr_t state) {
+	static void StateInitialize(const AggregateFunction &, data_ptr_t state) {
 		OP::Initialize(*reinterpret_cast<STATE *>(state));
 	}
 
@@ -16112,6 +16157,150 @@ protected:
 } // namespace duckdb
 
 
+//===----------------------------------------------------------------------===//
+//                         DuckDB
+//
+// duckdb/common/insertion_order_preserving_map.hpp
+//
+//
+//===----------------------------------------------------------------------===//
+
+
+
+
+
+
+
+
+
+
+
+namespace duckdb {
+
+template <typename V>
+class InsertionOrderPreservingMap {
+public:
+	typedef vector<pair<string, V>> VECTOR_TYPE; // NOLINT: matching name of std
+	typedef string key_type;                     // NOLINT: matching name of std
+
+public:
+	InsertionOrderPreservingMap() {
+	}
+
+private:
+	VECTOR_TYPE map;
+	case_insensitive_map_t<idx_t> map_idx;
+
+public:
+	vector<string> Keys() const {
+		vector<string> keys;
+		keys.resize(this->size());
+		for (auto &kv : map_idx) {
+			keys[kv.second] = kv.first;
+		}
+
+		return keys;
+	}
+
+	typename VECTOR_TYPE::iterator begin() { // NOLINT: match stl API
+		return map.begin();
+	}
+
+	typename VECTOR_TYPE::iterator end() { // NOLINT: match stl API
+		return map.end();
+	}
+
+	typename VECTOR_TYPE::const_iterator begin() const { // NOLINT: match stl API
+		return map.begin();
+	}
+
+	typename VECTOR_TYPE::const_iterator end() const { // NOLINT: match stl API
+		return map.end();
+	}
+
+	typename VECTOR_TYPE::reverse_iterator rbegin() { // NOLINT: match stl API
+		return map.rbegin();
+	}
+
+	typename VECTOR_TYPE::reverse_iterator rend() { // NOLINT: match stl API
+		return map.rend();
+	}
+
+	typename VECTOR_TYPE::iterator find(const string &key) { // NOLINT: match stl API
+		auto entry = map_idx.find(key);
+		if (entry == map_idx.end()) {
+			return map.end();
+		}
+		return map.begin() + static_cast<typename VECTOR_TYPE::difference_type>(entry->second);
+	}
+
+	typename VECTOR_TYPE::const_iterator find(const string &key) const { // NOLINT: match stl API
+		auto entry = map_idx.find(key);
+		if (entry == map_idx.end()) {
+			return map.end();
+		}
+		return map.begin() + static_cast<typename VECTOR_TYPE::difference_type>(entry->second);
+	}
+
+	idx_t size() const { // NOLINT: match stl API
+		return map_idx.size();
+	}
+
+	bool empty() const { // NOLINT: match stl API
+		return map_idx.empty();
+	}
+
+	void resize(idx_t nz) { // NOLINT: match stl API
+		map.resize(nz);
+	}
+
+	void insert(const string &key, V &value) { // NOLINT: match stl API
+		map.push_back(make_pair(key, std::move(value)));
+		map_idx[key] = map.size() - 1;
+	}
+
+	void insert(const string &key, V &&value) { // NOLINT: match stl API
+		map.push_back(make_pair(key, std::move(value)));
+		map_idx[key] = map.size() - 1;
+	}
+
+	void insert(pair<string, V> &&value) { // NOLINT: match stl API
+		map.push_back(std::move(value));
+		map_idx[value.first] = map.size() - 1;
+	}
+
+	void erase(typename VECTOR_TYPE::iterator it) { // NOLINT: match stl API
+		auto key = it->first;
+		auto idx = map_idx[it->first];
+		map.erase(it);
+		map_idx.erase(key);
+		for (auto &kv : map_idx) {
+			if (kv.second > idx) {
+				kv.second--;
+			}
+		}
+	}
+
+	bool contains(const string &key) const { // NOLINT: match stl API
+		return map_idx.find(key) != map_idx.end();
+	}
+
+	const V &at(const string &key) const { // NOLINT: match stl API
+		return map[map_idx.at(key)].second;
+	}
+
+	V &operator[](const string &key) {
+		if (!contains(key)) {
+			auto v = V();
+			insert(key, v);
+		}
+		return map[map_idx[key]].second;
+	}
+};
+
+} // namespace duckdb
+
+
 #include <algorithm>
 #include <functional>
 
@@ -16149,7 +16338,7 @@ public:
 	void ResolveOperatorTypes();
 
 	virtual string GetName() const;
-	virtual string ParamsToString() const;
+	virtual InsertionOrderPreservingMap<string> ParamsToString() const;
 	virtual string ToString(ExplainFormat format = ExplainFormat::DEFAULT) const;
 	DUCKDB_API void Print();
 	//! Debug method: verify that the integrity of expressions & child nodes are maintained
@@ -16809,6 +16998,7 @@ enum class OrderPreservationType : uint8_t {
 } // namespace duckdb
 
 
+
 namespace duckdb {
 class Event;
 class Executor;
@@ -16849,8 +17039,8 @@ public:
 
 public:
 	virtual string GetName() const;
-	virtual string ParamsToString() const {
-		return "";
+	virtual InsertionOrderPreservingMap<string> ParamsToString() const {
+		return InsertionOrderPreservingMap<string>();
 	}
 	virtual string ToString(ExplainFormat format = ExplainFormat::DEFAULT) const;
 	void Print() const;
@@ -19644,6 +19834,11 @@ public:
 	CatalogType GetCatalogType() const override;
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit ChangeOwnershipInfo();
 };
 
 //===--------------------------------------------------------------------===//
@@ -22920,13 +23115,13 @@ typedef struct {
 	char *name;
 #else
 	// deprecated, use duckdb_column_data
-	void *__deprecated_data;
+	void *deprecated_data;
 	// deprecated, use duckdb_nullmask_data
-	bool *__deprecated_nullmask;
+	bool *deprecated_nullmask;
 	// deprecated, use duckdb_column_type
-	duckdb_type __deprecated_type;
+	duckdb_type deprecated_type;
 	// deprecated, use duckdb_column_name
-	char *__deprecated_name;
+	char *deprecated_name;
 #endif
 	void *internal_data;
 } duckdb_column;
@@ -22934,7 +23129,7 @@ typedef struct {
 //! A vector to a specified column in a data chunk. Lives as long as the
 //! data chunk lives, i.e., must not be destroyed.
 typedef struct _duckdb_vector {
-	void *__vctr;
+	void *internal_ptr;
 } * duckdb_vector;
 
 //===--------------------------------------------------------------------===//
@@ -22966,85 +23161,85 @@ typedef struct {
 	char *error_message;
 #else
 	// deprecated, use duckdb_column_count
-	idx_t __deprecated_column_count;
+	idx_t deprecated_column_count;
 	// deprecated, use duckdb_row_count
-	idx_t __deprecated_row_count;
+	idx_t deprecated_row_count;
 	// deprecated, use duckdb_rows_changed
-	idx_t __deprecated_rows_changed;
+	idx_t deprecated_rows_changed;
 	// deprecated, use duckdb_column_*-family of functions
-	duckdb_column *__deprecated_columns;
+	duckdb_column *deprecated_columns;
 	// deprecated, use duckdb_result_error
-	char *__deprecated_error_message;
+	char *deprecated_error_message;
 #endif
 	void *internal_data;
 } duckdb_result;
 
 //! A database object. Should be closed with `duckdb_close`.
 typedef struct _duckdb_database {
-	void *__db;
+	void *internal_ptr;
 } * duckdb_database;
 
 //! A connection to a duckdb database. Must be closed with `duckdb_disconnect`.
 typedef struct _duckdb_connection {
-	void *__conn;
+	void *internal_ptr;
 } * duckdb_connection;
 
 //! A prepared statement is a parameterized query that allows you to bind parameters to it.
 //! Must be destroyed with `duckdb_destroy_prepare`.
 typedef struct _duckdb_prepared_statement {
-	void *__prep;
+	void *internal_ptr;
 } * duckdb_prepared_statement;
 
 //! Extracted statements. Must be destroyed with `duckdb_destroy_extracted`.
 typedef struct _duckdb_extracted_statements {
-	void *__extrac;
+	void *internal_ptr;
 } * duckdb_extracted_statements;
 
 //! The pending result represents an intermediate structure for a query that is not yet fully executed.
 //! Must be destroyed with `duckdb_destroy_pending`.
 typedef struct _duckdb_pending_result {
-	void *__pend;
+	void *internal_ptr;
 } * duckdb_pending_result;
 
 //! The appender enables fast data loading into DuckDB.
 //! Must be destroyed with `duckdb_appender_destroy`.
 typedef struct _duckdb_appender {
-	void *__appn;
+	void *internal_ptr;
 } * duckdb_appender;
 
 //! The table description allows querying info about the table.
 //! Must be destroyed with `duckdb_table_description_destroy`.
 typedef struct _duckdb_table_description {
-	void *__tabledesc;
+	void *internal_ptr;
 } * duckdb_table_description;
 
 //! Can be used to provide start-up options for the DuckDB instance.
 //! Must be destroyed with `duckdb_destroy_config`.
 typedef struct _duckdb_config {
-	void *__cnfg;
+	void *internal_ptr;
 } * duckdb_config;
 
 //! Holds an internal logical type.
 //! Must be destroyed with `duckdb_destroy_logical_type`.
 typedef struct _duckdb_logical_type {
-	void *__lglt;
+	void *internal_ptr;
 } * duckdb_logical_type;
 
 //! Contains a data chunk from a duckdb_result.
 //! Must be destroyed with `duckdb_destroy_data_chunk`.
 typedef struct _duckdb_data_chunk {
-	void *__dtck;
+	void *internal_ptr;
 } * duckdb_data_chunk;
 
 //! Holds a DuckDB value, which wraps a type.
 //! Must be destroyed with `duckdb_destroy_value`.
 typedef struct _duckdb_value {
-	void *__val;
+	void *internal_ptr;
 } * duckdb_value;
 
 //! Holds a recursive tree that matches the query plan.
 typedef struct _duckdb_profiling_info {
-	void *__prof;
+	void *internal_ptr;
 } * duckdb_profiling_info;
 
 //===--------------------------------------------------------------------===//
@@ -23052,7 +23247,7 @@ typedef struct _duckdb_profiling_info {
 //===--------------------------------------------------------------------===//
 //! Additional function info. When setting this info, it is necessary to pass a destroy-callback function.
 typedef struct _duckdb_function_info {
-	void *__val;
+	void *internal_ptr;
 } * duckdb_function_info;
 
 //===--------------------------------------------------------------------===//
@@ -23060,11 +23255,40 @@ typedef struct _duckdb_function_info {
 //===--------------------------------------------------------------------===//
 //! A scalar function. Must be destroyed with `duckdb_destroy_scalar_function`.
 typedef struct _duckdb_scalar_function {
-	void *__val;
+	void *internal_ptr;
 } * duckdb_scalar_function;
 
 //! The main function of the scalar function.
 typedef void (*duckdb_scalar_function_t)(duckdb_function_info info, duckdb_data_chunk input, duckdb_vector output);
+
+//===--------------------------------------------------------------------===//
+// Aggregate function types
+//===--------------------------------------------------------------------===//
+//! An aggregate function. Must be destroyed with `duckdb_destroy_aggregate_function`.
+typedef struct _duckdb_aggregate_function {
+	void *internal_ptr;
+} * duckdb_aggregate_function;
+
+//!
+typedef struct _duckdb_aggregate_state {
+	void *internal_ptr;
+} * duckdb_aggregate_state;
+
+//! Returns the aggregate state size
+typedef idx_t (*duckdb_aggregate_state_size)(duckdb_function_info info);
+//! Initialize the aggregate state
+typedef void (*duckdb_aggregate_init_t)(duckdb_function_info info, duckdb_aggregate_state state);
+//! Destroy aggregate state (optional)
+typedef void (*duckdb_aggregate_destroy_t)(duckdb_aggregate_state *states, idx_t count);
+//! Update a set of aggregate states with new values
+typedef void (*duckdb_aggregate_update_t)(duckdb_function_info info, duckdb_data_chunk input,
+                                          duckdb_aggregate_state *states);
+//! Combine aggregate states
+typedef void (*duckdb_aggregate_combine_t)(duckdb_function_info info, duckdb_aggregate_state *source,
+                                           duckdb_aggregate_state *target, idx_t count);
+//! Finalize aggregate states into a result vector
+typedef void (*duckdb_aggregate_finalize_t)(duckdb_function_info info, duckdb_aggregate_state *source,
+                                            duckdb_vector result, idx_t count, idx_t offset);
 
 //===--------------------------------------------------------------------===//
 // Table function types
@@ -23073,17 +23297,17 @@ typedef void (*duckdb_scalar_function_t)(duckdb_function_info info, duckdb_data_
 #ifndef DUCKDB_NO_EXTENSION_FUNCTIONS
 //! A table function. Must be destroyed with `duckdb_destroy_table_function`.
 typedef struct _duckdb_table_function {
-	void *__val;
+	void *internal_ptr;
 } * duckdb_table_function;
 
 //! The bind info of the function. When setting this info, it is necessary to pass a destroy-callback function.
 typedef struct _duckdb_bind_info {
-	void *__val;
+	void *internal_ptr;
 } * duckdb_bind_info;
 
 //! Additional function init info. When setting this info, it is necessary to pass a destroy-callback function.
 typedef struct _duckdb_init_info {
-	void *__val;
+	void *internal_ptr;
 } * duckdb_init_info;
 
 //! The bind function of the table function.
@@ -23101,7 +23325,7 @@ typedef void (*duckdb_table_function_t)(duckdb_function_info info, duckdb_data_c
 
 //! Additional replacement scan info. When setting this info, it is necessary to pass a destroy-callback function.
 typedef struct _duckdb_replacement_scan_info {
-	void *__val;
+	void *internal_ptr;
 } * duckdb_replacement_scan_info;
 
 //! A replacement scan function that can be added to a database.
@@ -23114,22 +23338,22 @@ typedef void (*duckdb_replacement_callback_t)(duckdb_replacement_scan_info info,
 
 //! Holds an arrow query result. Must be destroyed with `duckdb_destroy_arrow`.
 typedef struct _duckdb_arrow {
-	void *__arrw;
+	void *internal_ptr;
 } * duckdb_arrow;
 
 //! Holds an arrow array stream. Must be destroyed with `duckdb_destroy_arrow_stream`.
 typedef struct _duckdb_arrow_stream {
-	void *__arrwstr;
+	void *internal_ptr;
 } * duckdb_arrow_stream;
 
 //! Holds an arrow schema. Remember to release the respective ArrowSchema object.
 typedef struct _duckdb_arrow_schema {
-	void *__arrs;
+	void *internal_ptr;
 } * duckdb_arrow_schema;
 
 //! Holds an arrow array. Remember to release the respective ArrowArray object.
 typedef struct _duckdb_arrow_array {
-	void *__arra;
+	void *internal_ptr;
 } * duckdb_arrow_array;
 
 //===--------------------------------------------------------------------===//
@@ -23720,6 +23944,18 @@ This means that the data of the string does not have a separate allocation.
 */
 DUCKDB_API bool duckdb_string_is_inlined(duckdb_string_t string);
 
+/*!
+Returns the string length of a string_t
+
+*/
+DUCKDB_API uint32_t duckdb_string_t_length(duckdb_string_t string);
+
+/*!
+Returns a pointer to the string data of a string_t
+
+*/
+DUCKDB_API const char *duckdb_string_t_data(duckdb_string_t *string);
+
 //===--------------------------------------------------------------------===//
 // Date/Time/Timestamp Helpers
 //===--------------------------------------------------------------------===//
@@ -23758,6 +23994,7 @@ DUCKDB_API duckdb_time_struct duckdb_from_time(duckdb_time time);
 
 /*!
 Create a `duckdb_time_tz` object from micros and a timezone offset.
+Not to be confused with `duckdb_create_time_tz_value`, which creates a duckdb_value.
 
 * micros: The microsecond component of the time.
 * offset: The timezone offset component of the time.
@@ -24329,12 +24566,328 @@ Creates a value from a string
 DUCKDB_API duckdb_value duckdb_create_varchar_length(const char *text, idx_t length);
 
 /*!
+Creates a value from a boolean
+
+ * value: The boolean value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_bool(bool input);
+
+/*!
+Creates a value from a int8_t (a tinyint)
+
+ * value: The tinyint value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_int8(int8_t input);
+
+/*!
+Creates a value from a uint8_t (a utinyint)
+
+ * value: The utinyint value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_uint8(uint8_t input);
+
+/*!
+Creates a value from a int16_t (a smallint)
+
+ * value: The smallint value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_int16(int16_t input);
+
+/*!
+Creates a value from a uint16_t (a usmallint)
+
+ * value: The usmallint value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_uint16(uint16_t input);
+
+/*!
+Creates a value from a int32_t (an integer)
+
+ * value: The integer value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_int32(int32_t input);
+
+/*!
+Creates a value from a uint32_t (a uinteger)
+
+ * value: The uinteger value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_uint32(uint32_t input);
+
+/*!
+Creates a value from a uint64_t (a ubigint)
+
+ * value: The ubigint value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_uint64(uint64_t input);
+
+/*!
 Creates a value from an int64
 
 * value: The bigint value
 * returns: The value. This must be destroyed with `duckdb_destroy_value`.
 */
 DUCKDB_API duckdb_value duckdb_create_int64(int64_t val);
+
+/*!
+Creates a value from a hugeint
+
+ * value: The hugeint value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_hugeint(duckdb_hugeint input);
+
+/*!
+Creates a value from a uhugeint
+
+ * value: The uhugeint value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_uhugeint(duckdb_uhugeint input);
+
+/*!
+Creates a value from a float
+
+ * value: The float value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_float(float input);
+
+/*!
+Creates a value from a double
+
+ * value: The double value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_double(double input);
+
+/*!
+Creates a value from a date
+
+ * value: The date value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_date(duckdb_date input);
+
+/*!
+Creates a value from a time
+
+ * value: The time value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_time(duckdb_time input);
+
+/*!
+Creates a value from a time_tz.
+Not to be confused with `duckdb_create_time_tz`, which creates a duckdb_time_tz_t.
+
+ * value: The time_tz value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_time_tz_value(duckdb_time_tz value);
+
+/*!
+Creates a value from a timestamp
+
+ * value: The timestamp value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_timestamp(duckdb_timestamp input);
+
+/*!
+Creates a value from an interval
+
+ * value: The interval value
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_interval(duckdb_interval input);
+
+/*!
+Creates a value from a blob
+
+ * data: The blob data
+ * length: The length of the blob data
+ * returns: The value. This must be destroyed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_create_blob(const uint8_t *data, idx_t length);
+
+/*!
+Returns the boolean value of the given value.
+
+ * val: A duckdb_value containing a boolean
+ * returns: A boolean, or false if the value cannot be converted
+ */
+DUCKDB_API bool duckdb_get_bool(duckdb_value val);
+
+/*!
+Returns the int8_t value of the given value.
+
+ * val: A duckdb_value containing a tinyint
+ * returns: A int8_t, or MinValue<int8> if the value cannot be converted
+ */
+DUCKDB_API int8_t duckdb_get_int8(duckdb_value val);
+
+/*!
+Returns the uint8_t value of the given value.
+
+ * val: A duckdb_value containing a utinyint
+ * returns: A uint8_t, or MinValue<uint8> if the value cannot be converted
+ */
+DUCKDB_API uint8_t duckdb_get_uint8(duckdb_value val);
+
+/*!
+Returns the int16_t value of the given value.
+
+ * val: A duckdb_value containing a smallint
+ * returns: A int16_t, or MinValue<int16> if the value cannot be converted
+ */
+DUCKDB_API int16_t duckdb_get_int16(duckdb_value val);
+
+/*!
+Returns the uint16_t value of the given value.
+
+ * val: A duckdb_value containing a usmallint
+ * returns: A uint16_t, or MinValue<uint16> if the value cannot be converted
+ */
+DUCKDB_API uint16_t duckdb_get_uint16(duckdb_value val);
+
+/*!
+Returns the int32_t value of the given value.
+
+ * val: A duckdb_value containing a integer
+ * returns: A int32_t, or MinValue<int32> if the value cannot be converted
+ */
+DUCKDB_API int32_t duckdb_get_int32(duckdb_value val);
+
+/*!
+Returns the uint32_t value of the given value.
+
+ * val: A duckdb_value containing a uinteger
+ * returns: A uint32_t, or MinValue<uint32> if the value cannot be converted
+ */
+DUCKDB_API uint32_t duckdb_get_uint32(duckdb_value val);
+
+/*!
+Returns the int64_t value of the given value.
+
+ * val: A duckdb_value containing a bigint
+ * returns: A int64_t, or MinValue<int64> if the value cannot be converted
+ */
+DUCKDB_API int64_t duckdb_get_int64(duckdb_value val);
+
+/*!
+Returns the uint64_t value of the given value.
+
+ * val: A duckdb_value containing a ubigint
+ * returns: A uint64_t, or MinValue<uint64> if the value cannot be converted
+ */
+DUCKDB_API uint64_t duckdb_get_uint64(duckdb_value val);
+
+/*!
+Returns the hugeint value of the given value.
+
+ * val: A duckdb_value containing a hugeint
+ * returns: A duckdb_hugeint, or MinValue<hugeint> if the value cannot be converted
+ */
+DUCKDB_API duckdb_hugeint duckdb_get_hugeint(duckdb_value val);
+
+/*!
+Returns the uhugeint value of the given value.
+
+ * val: A duckdb_value containing a uhugeint
+ * returns: A duckdb_uhugeint, or MinValue<uhugeint> if the value cannot be converted
+ */
+DUCKDB_API duckdb_uhugeint duckdb_get_uhugeint(duckdb_value val);
+
+/*!
+Returns the float value of the given value.
+
+ * val: A duckdb_value containing a float
+ * returns: A float, or NAN if the value cannot be converted
+ */
+DUCKDB_API float duckdb_get_float(duckdb_value val);
+
+/*!
+Returns the double value of the given value.
+
+ * val: A duckdb_value containing a double
+ * returns: A double, or NAN if the value cannot be converted
+ */
+DUCKDB_API double duckdb_get_double(duckdb_value val);
+
+/*!
+Returns the date value of the given value.
+
+ * val: A duckdb_value containing a date
+ * returns: A duckdb_date, or MinValue<date> if the value cannot be converted
+ */
+DUCKDB_API duckdb_date duckdb_get_date(duckdb_value val);
+
+/*!
+Returns the time value of the given value.
+
+ * val: A duckdb_value containing a time
+ * returns: A duckdb_time, or MinValue<time> if the value cannot be converted
+ */
+DUCKDB_API duckdb_time duckdb_get_time(duckdb_value val);
+
+/*!
+Returns the time_tz value of the given value.
+
+ * val: A duckdb_value containing a time_tz
+ * returns: A duckdb_time_tz, or MinValue<time_tz> if the value cannot be converted
+ */
+DUCKDB_API duckdb_time_tz duckdb_get_time_tz(duckdb_value val);
+
+/*!
+Returns the timestamp value of the given value.
+
+ * val: A duckdb_value containing a timestamp
+ * returns: A duckdb_timestamp, or MinValue<timestamp> if the value cannot be converted
+ */
+DUCKDB_API duckdb_timestamp duckdb_get_timestamp(duckdb_value val);
+
+/*!
+Returns the interval value of the given value.
+
+ * val: A duckdb_value containing a interval
+ * returns: A duckdb_interval, or MinValue<interval> if the value cannot be converted
+ */
+DUCKDB_API duckdb_interval duckdb_get_interval(duckdb_value val);
+
+/*!
+Returns the type of the given value. The type is valid as long as the value is not destroyed.
+The type itself must not be destroyed.
+
+ * val: A duckdb_value
+ * returns: A duckdb_logical_type.
+ */
+DUCKDB_API duckdb_logical_type duckdb_get_value_type(duckdb_value val);
+
+/*!
+Returns the blob value of the given value.
+
+ * val: A duckdb_value containing a blob
+ * returns: A duckdb_blob
+ */
+DUCKDB_API duckdb_blob duckdb_get_blob(duckdb_value val);
+
+/*!
+Obtains a string representation of the given value.
+The result must be destroyed with `duckdb_free`.
+
+* value: The value
+* returns: The string value. This must be destroyed with `duckdb_free`.
+*/
+DUCKDB_API char *duckdb_get_varchar(duckdb_value value);
 
 /*!
 Creates a struct value from a type and an array of values. Must be destroyed with `duckdb_destroy_value`.
@@ -24366,23 +24919,6 @@ Must be destroyed with `duckdb_destroy_value`.
 * @return The array value, or nullptr, if the child type is `DUCKDB_TYPE_ANY` or `DUCKDB_TYPE_INVALID`.
 */
 DUCKDB_API duckdb_value duckdb_create_array_value(duckdb_logical_type type, duckdb_value *values, idx_t value_count);
-
-/*!
-Obtains a string representation of the given value.
-The result must be destroyed with `duckdb_free`.
-
-* value: The value
-* returns: The string value. This must be destroyed with `duckdb_free`.
-*/
-DUCKDB_API char *duckdb_get_varchar(duckdb_value value);
-
-/*!
-Obtains an int64 of the given value.
-
-* value: The value
-* returns: The int64 value, or 0 if no conversion is possible
-*/
-DUCKDB_API int64_t duckdb_get_int64(duckdb_value value);
 
 //===--------------------------------------------------------------------===//
 // Logical Type Interface
@@ -24948,6 +25484,14 @@ Sets the NULL handling of the scalar function to SPECIAL_HANDLING.
 DUCKDB_API void duckdb_scalar_function_set_special_handling(duckdb_scalar_function scalar_function);
 
 /*!
+Sets the Function Stability of the scalar function to VOLATILE, indicating the function should be re-run for every row.
+This limits optimization that can be performed for the function.
+
+* scalar_function: The scalar function
+*/
+DUCKDB_API void duckdb_scalar_function_set_volatile(duckdb_scalar_function function);
+
+/*!
 Adds a parameter to the scalar function.
 
 * @param scalar_function The scalar function.
@@ -25011,6 +25555,123 @@ Report that an error has occurred while executing the scalar function.
 * error: The error message
 */
 DUCKDB_API void duckdb_scalar_function_set_error(duckdb_function_info info, const char *error);
+
+//===--------------------------------------------------------------------===//
+// Aggregate Functions
+//===--------------------------------------------------------------------===//
+/*!
+Creates a new empty aggregate function.
+
+The return value should be destroyed with `duckdb_destroy_aggregate_function`.
+
+* returns: The aggregate function object.
+*/
+DUCKDB_API duckdb_aggregate_function duckdb_create_aggregate_function();
+
+/*!
+Destroys the given aggregate function object.
+
+* scalar_function: The aggregate function to destroy
+*/
+DUCKDB_API void duckdb_destroy_aggregate_function(duckdb_aggregate_function *aggregate_function);
+
+/*!
+Sets the name of the given aggregate function.
+
+* aggregate_function: The aggregate function
+* name: The name of the aggregate function
+*/
+DUCKDB_API void duckdb_aggregate_function_set_name(duckdb_aggregate_function aggregate_function, const char *name);
+
+/*!
+Adds a parameter to the aggregate function.
+
+* @param aggregate_function The aggregate function.
+* @param type The parameter type. Cannot contain INVALID.
+*/
+DUCKDB_API void duckdb_aggregate_function_add_parameter(duckdb_aggregate_function aggregate_function,
+                                                        duckdb_logical_type type);
+
+/*!
+Sets the return type of the aggregate function.
+
+* @param aggregate_function The aggregate function.
+* @param type The return type. Cannot contain INVALID or ANY.
+*/
+DUCKDB_API void duckdb_aggregate_function_set_return_type(duckdb_aggregate_function aggregate_function,
+                                                          duckdb_logical_type type);
+
+/*!
+Sets the main functions of the aggregate function.
+
+* aggregate_function: The aggregate function
+* state_size: state size
+* state_init: state init function
+* update: update states
+* combine: combine states
+* finalize: finalize states
+*/
+DUCKDB_API void duckdb_aggregate_function_set_functions(duckdb_aggregate_function aggregate_function,
+                                                        duckdb_aggregate_state_size state_size,
+                                                        duckdb_aggregate_init_t state_init,
+                                                        duckdb_aggregate_update_t update,
+                                                        duckdb_aggregate_combine_t combine,
+                                                        duckdb_aggregate_finalize_t finalize);
+
+/*!
+Sets the state destructor callback of the aggregate function (optional)
+
+* aggregate_function: The aggregate function
+* destroy: state destroy callback
+*/
+DUCKDB_API void duckdb_aggregate_function_set_destructor(duckdb_aggregate_function aggregate_function,
+                                                         duckdb_aggregate_destroy_t destroy);
+/*!
+Register the aggregate function object within the given connection.
+
+The function requires at least a name, functions and a return type.
+
+If the function is incomplete or a function with this name already exists DuckDBError is returned.
+
+* con: The connection to register it in.
+* function: The function pointer
+* returns: Whether or not the registration was successful.
+*/
+DUCKDB_API duckdb_state duckdb_register_aggregate_function(duckdb_connection con,
+                                                           duckdb_aggregate_function aggregate_function);
+
+/*!
+Sets the NULL handling of the aggregate function to SPECIAL_HANDLING.
+
+* aggregate_function: The aggregate function
+*/
+DUCKDB_API void duckdb_aggregate_function_set_special_handling(duckdb_aggregate_function aggregate_function);
+
+/*!
+Assigns extra information to the scalar function that can be fetched during binding, etc.
+
+* aggregate_function: The aggregate function
+* extra_info: The extra information
+* destroy: The callback that will be called to destroy the bind data (if any)
+*/
+DUCKDB_API void duckdb_aggregate_function_set_extra_info(duckdb_aggregate_function aggregate_function, void *extra_info,
+                                                         duckdb_delete_callback_t destroy);
+
+/*!
+Retrieves the extra info of the function as set in `duckdb_aggregate_function_set_extra_info`.
+
+* info: The info object
+* returns: The extra info
+*/
+DUCKDB_API void *duckdb_aggregate_function_get_extra_info(duckdb_function_info info);
+
+/*!
+Report that an error has occurred while executing the aggregate function.
+
+* info: The info object
+* error: The error message
+*/
+DUCKDB_API void duckdb_aggregate_function_set_error(duckdb_function_info info, const char *error);
 
 //===--------------------------------------------------------------------===//
 // Table Functions
@@ -25365,55 +26026,56 @@ DUCKDB_API void duckdb_replacement_scan_set_error(duckdb_replacement_scan_info i
 //===--------------------------------------------------------------------===//
 
 /*!
-Returns the root node from the profiling information. Returns NULL if profiling is not enabled
-
-* @param connection A connection object
-* @return A profiling information object
-*/
+ * Returns the root node of the profiling information. Returns nullptr, if profiling is not enabled.
+ *
+ * @param connection A connection object.
+ * @return A profiling information object.
+ */
 DUCKDB_API duckdb_profiling_info duckdb_get_profiling_info(duckdb_connection connection);
 
 /*!
-Returns the value of the setting key of the current profiling info node. If the setting does not exist or is not
-enabled, nullptr is returned.
-
-* @param info A profiling information object
-* @param key The name of the metric setting to return the value for
-* @return The value of the metric setting. Must be freed with `duckdb_free`.
-*/
-DUCKDB_API const char *duckdb_profiling_info_get_value(duckdb_profiling_info info, const char *key);
+ * Returns the value of the metric of the current profiling info node. Returns nullptr, if the metric does
+ * not exist or is not enabled. Currently, the value holds a string, and you can retrieve the string
+ * by calling the corresponding function: char *duckdb_get_varchar(duckdb_value value).
+ *
+ * @param info A profiling information object.
+ * @param key The name of the requested metric.
+ * @return The value of the metric. Must be freed with `duckdb_destroy_value`.
+ */
+DUCKDB_API duckdb_value duckdb_profiling_info_get_value(duckdb_profiling_info info, const char *key);
 
 /*!
-Returns the number of children in the current profiling info node.
-
-* @param info A profiling information object
-* @return The number of children in the current node
-*/
+ * Returns the number of children in the current profiling info node.
+ *
+ * @param info A profiling information object.
+ * @return The number of children in the current node.
+ */
 DUCKDB_API idx_t duckdb_profiling_info_get_child_count(duckdb_profiling_info info);
 
 /*!
-Returns the child node at the specified index.
-
-* @param info A profiling information object
-* @param index The index of the child node to return
-* @return The child node at the specified index
-*/
+ * Returns the child node at the specified index.
+ *
+ * @param info A profiling information object.
+ * @param index The index of the child node.
+ * @return The child node at the specified index.
+ */
 DUCKDB_API duckdb_profiling_info duckdb_profiling_info_get_child(duckdb_profiling_info info, idx_t index);
 
 /*! Returns the operator name of the current profiling info node, if the node is an Operator Node.
  *
- * @param info A profiling information object
- * @return The name of the operator of the current node. Returns a nullptr if the node is not an Operator Node. The
+ * @param info A profiling information object.
+ * @return The name of the operator of the current node. Returns nullptr, if the node is not an Operator Node. The
  * result must be freed with `duckdb_free`.
  */
 DUCKDB_API const char *duckdb_profiling_info_get_name(duckdb_profiling_info info);
 
 /*!
-Returns the query of the current profiling info node, if the node the query root node.
-
-* @param info A profiling information object
-* @return The query of the current node. Returns a nullptr if the node is not a Query Node. The result must be freed
-with `duckdb_free`.
-*/
+ * Returns the query of the current profiling info node, if the node is the root.
+ *
+ * @param info A profiling information object.
+ * @return The query of the current node. Returns nullptr, if the node is not the root. The result must be freed
+ * with `duckdb_free`.
+ */
 DUCKDB_API const char *duckdb_profiling_info_get_query(duckdb_profiling_info info);
 
 //===--------------------------------------------------------------------===//
@@ -26171,6 +26833,11 @@ private:
 
 
 
+namespace duckdb_yyjson {
+struct yyjson_mut_doc;
+struct yyjson_mut_val;
+} // namespace duckdb_yyjson
+
 namespace duckdb {
 
 enum class MetricsType : uint8_t { CPU_TIME, EXTRA_INFO, OPERATOR_CARDINALITY, OPERATOR_TIMING };
@@ -26197,7 +26864,7 @@ struct SettingSetFunctions {
 
 struct Metrics {
 	double cpu_time;
-	string extra_info;
+	InsertionOrderPreservingMap<string> extra_info;
 	idx_t operator_cardinality;
 	double operator_timing;
 
@@ -26233,7 +26900,7 @@ public:
 
 public:
 	string GetMetricAsString(MetricsType setting) const;
-	void PrintAllMetricsToSS(std::stringstream &ss, const string &depth);
+	void WriteMetricsToJSON(duckdb_yyjson::yyjson_mut_doc *doc, duckdb_yyjson::yyjson_mut_val *destination);
 };
 } // namespace duckdb
 
@@ -27656,148 +28323,6 @@ struct CommonTableExpressionInfo {
 
 } // namespace duckdb
 
-//===----------------------------------------------------------------------===//
-//                         DuckDB
-//
-// duckdb/common/insertion_order_preserving_map.hpp
-//
-//
-//===----------------------------------------------------------------------===//
-
-
-
-
-
-
-
-
-
-
-
-namespace duckdb {
-
-template <typename V>
-class InsertionOrderPreservingMap {
-public:
-	typedef vector<pair<string, V>> VECTOR_TYPE; // NOLINT: matching name of std
-	typedef string key_type;                     // NOLINT: matching name of std
-
-public:
-	InsertionOrderPreservingMap() {
-	}
-
-private:
-	VECTOR_TYPE map;
-	case_insensitive_map_t<idx_t> map_idx;
-
-public:
-	vector<string> Keys() const {
-		vector<string> keys;
-		keys.resize(this->size());
-		for (auto &kv : map_idx) {
-			keys[kv.second] = kv.first;
-		}
-
-		return keys;
-	}
-
-	typename VECTOR_TYPE::iterator begin() { // NOLINT: match stl API
-		return map.begin();
-	}
-
-	typename VECTOR_TYPE::iterator end() { // NOLINT: match stl API
-		return map.end();
-	}
-
-	typename VECTOR_TYPE::const_iterator begin() const { // NOLINT: match stl API
-		return map.begin();
-	}
-
-	typename VECTOR_TYPE::const_iterator end() const { // NOLINT: match stl API
-		return map.end();
-	}
-
-	typename VECTOR_TYPE::reverse_iterator rbegin() { // NOLINT: match stl API
-		return map.rbegin();
-	}
-
-	typename VECTOR_TYPE::reverse_iterator rend() { // NOLINT: match stl API
-		return map.rend();
-	}
-
-	typename VECTOR_TYPE::iterator find(const string &key) { // NOLINT: match stl API
-		auto entry = map_idx.find(key);
-		if (entry == map_idx.end()) {
-			return map.end();
-		}
-		return map.begin() + static_cast<typename VECTOR_TYPE::difference_type>(entry->second);
-	}
-
-	typename VECTOR_TYPE::const_iterator find(const string &key) const { // NOLINT: match stl API
-		auto entry = map_idx.find(key);
-		if (entry == map_idx.end()) {
-			return map.end();
-		}
-		return map.begin() + static_cast<typename VECTOR_TYPE::difference_type>(entry->second);
-	}
-
-	idx_t size() const { // NOLINT: match stl API
-		return map_idx.size();
-	}
-
-	bool empty() const { // NOLINT: match stl API
-		return map_idx.empty();
-	}
-
-	void resize(idx_t nz) { // NOLINT: match stl API
-		map.resize(nz);
-	}
-
-	void insert(const string &key, V &value) { // NOLINT: match stl API
-		map.push_back(make_pair(key, std::move(value)));
-		map_idx[key] = map.size() - 1;
-	}
-
-	void insert(const string &key, V &&value) { // NOLINT: match stl API
-		map.push_back(make_pair(key, std::move(value)));
-		map_idx[key] = map.size() - 1;
-	}
-
-	void insert(pair<string, V> &&value) { // NOLINT: match stl API
-		map.push_back(std::move(value));
-		map_idx[value.first] = map.size() - 1;
-	}
-
-	void erase(typename VECTOR_TYPE::iterator it) { // NOLINT: match stl API
-		auto key = it->first;
-		auto idx = map_idx[it->first];
-		map.erase(it);
-		map_idx.erase(key);
-		for (auto &kv : map_idx) {
-			if (kv.second > idx) {
-				kv.second--;
-			}
-		}
-	}
-
-	bool contains(const string &key) const { // NOLINT: match stl API
-		return map_idx.find(key) != map_idx.end();
-	}
-
-	const V &at(const string &key) const { // NOLINT: match stl API
-		return map[map_idx.at(key)].second;
-	}
-
-	V &operator[](const string &key) {
-		if (!contains(key)) {
-			auto v = V();
-			insert(key, v);
-		}
-		return map[map_idx[key]].second;
-	}
-};
-
-} // namespace duckdb
 
 
 
@@ -28824,6 +29349,8 @@ struct DBConfigOptions {
 	//! This is a work-around that exists for certain clients (specifically R)
 	//! Because those clients do not like it when threads other than the main thread call into R, for e.g., arrow scans
 	bool initialize_in_main_thread = false;
+	//! The maximum number of schemas we will look through for "did you mean..." style errors in the catalog
+	idx_t catalog_error_max_schemas = 100;
 
 	bool operator==(const DBConfigOptions &other) const;
 };
@@ -29477,6 +30004,16 @@ struct AllowPersistentSecrets {
 	static constexpr const char *Description =
 	    "Allow the creation of persistent secrets, that are stored and loaded on restarts";
 	static constexpr const LogicalTypeId InputType = LogicalTypeId::BOOLEAN;
+	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
+	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
+	static Value GetSetting(const ClientContext &context);
+};
+
+struct CatalogErrorMaxSchema {
+	static constexpr const char *Name = "catalog_error_max_schemas";
+	static constexpr const char *Description =
+	    "The maximum number of schemas the system will scan for \"did you mean...\" style errors in the catalog";
+	static constexpr const LogicalTypeId InputType = LogicalTypeId::UBIGINT;
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -31210,6 +31747,8 @@ class QueryProfilingNode;
 // Recursive tree that mirrors the operator tree
 class ProfilingNode {
 public:
+	explicit ProfilingNode(ProfilingNodeType node_type) : node_type(node_type) {
+	}
 	virtual ~ProfilingNode() {};
 
 private:
@@ -31221,6 +31760,8 @@ public:
 	ProfilingNodeType node_type = ProfilingNodeType::OPERATOR;
 
 public:
+	virtual string GetName() const = 0;
+
 	idx_t GetChildCount() {
 		return children.size();
 	}
@@ -31262,23 +31803,37 @@ public:
 // Holds the top level query info
 class QueryProfilingNode : public ProfilingNode {
 public:
+	static constexpr const ProfilingNodeType TYPE = ProfilingNodeType::QUERY_ROOT;
+
+public:
+	explicit QueryProfilingNode(const string &query) : ProfilingNode(TYPE), query(query) {
+	}
 	~QueryProfilingNode() override {};
 
 public:
-	static constexpr const ProfilingNodeType TYPE = ProfilingNodeType::QUERY_ROOT;
-
+	string GetName() const override {
+		return EnumUtil::ToString(node_type);
+	}
 	string query;
 };
 
 class OperatorProfilingNode : public ProfilingNode {
 public:
+	static constexpr const ProfilingNodeType TYPE = ProfilingNodeType::OPERATOR;
+
+public:
+	OperatorProfilingNode(const string &name, PhysicalOperatorType type) : ProfilingNode(TYPE), name(name), type(type) {
+	}
 	~OperatorProfilingNode() override {};
 
 public:
-	static constexpr const ProfilingNodeType TYPE = ProfilingNodeType::OPERATOR;
+	string GetName() const override {
+		return name;
+	}
 
-	PhysicalOperatorType type;
+public:
 	string name;
+	PhysicalOperatorType type;
 };
 
 } // namespace duckdb

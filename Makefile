@@ -1,6 +1,20 @@
 DUCKDB_REPO=https://github.com/duckdb/duckdb.git
 DUCKDB_BRANCH=v1.0.0
 
+
+DUCKDB_VERSION := latest_2024-08-02_1471238851
+DUCKDB_LIB_PATH := /var/tmp/duckdb-build/${DUCKDB_VERSION}
+GO_BUILD_DEPS := -tags=duckdb_use_lib,no_duckdb_arrow,duckdb_scalar_udf
+GO_BUILD_ENV := CGO_LDFLAGS="-L${DUCKDB_LIB_PATH}" CGO_ENABLED=1
+
+UNAME := $(shell uname -s)
+ifeq ($(UNAME),Linux)
+    DUCK_ENV := LD_LIBRARY_PATH=${DUCKDB_LIB_PATH}
+endif
+ifeq ($(UNAME),Darwin)
+	DUCK_ENV := DYLD_LIBRARY_PATH=${DUCKDB_LIB_PATH}
+endif
+
 .PHONY: install
 install:
 	go install .
@@ -64,3 +78,9 @@ deps.freebsd.amd64: duckdb
 	cd duckdb && \
 	CFLAGS="-O3" CXXFLAGS="-O3" ${DUCKDB_COMMON_BUILD_FLAGS} gmake bundle-library -j 2
 	cp duckdb/build/release/libduckdb_bundle.a deps/freebsd_amd64/libduckdb.a
+
+
+.PHONY: test-agg
+test-agg:
+	echo 1
+	${GO_BUILD_ENV} go test -exec "env ${DUCK_ENV}" ${GO_BUILD_DEPS} ./... -run TestRegisterAggregate -v

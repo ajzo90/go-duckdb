@@ -264,10 +264,9 @@ func udf_local_init(info C.duckdb_init_info) {
 
 //export udf_callback
 func udf_callback(info C.duckdb_function_info, output C.duckdb_data_chunk) {
-	vecSize := int(C.duckdb_vector_size())
 	scanner := cMem.lookup(getScanner(info)).(Scanner)
 
-	ch := acquireChunk(vecSize, output)
+	ch := acquireChunk(int(C.duckdb_vector_size()), output)
 	size, err := scanner.Scan(ch)
 	releaseChunk(ch)
 	if err != nil {
