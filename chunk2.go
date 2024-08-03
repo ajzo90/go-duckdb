@@ -44,7 +44,7 @@ func AppendBytes(d *Vector, v []byte) {
 	d.pos++
 }
 
-func vectorData[T any](vec *Vector) []T {
+func VectorData[T any](vec *Vector) []T {
 	return (*[1 << 31]T)(vec.data)[:]
 }
 
@@ -98,7 +98,7 @@ func AppendMany[T validTypes](vec *Vector, v []T) {
 }
 
 func rawCopy[T any](vec *Vector, v []T) int {
-	return copy(vectorData[T](vec)[vec.pos:], v)
+	return copy(VectorData[T](vec)[vec.pos:], v)
 }
 
 func (d *Vector) init(sz int, v C.duckdb_vector, writable bool) {

@@ -17,9 +17,10 @@ void go_duckdb_aggregate_delete_callback(void *);
 import "C"
 
 import (
+	"context"
+	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"strings"
 	"unsafe"
 )
 
@@ -94,6 +95,17 @@ func go_duckdb_aggregate_finalize(info C.duckdb_function_info, source *C.duckdb_
 	internal(info).finalizeFn(source, result, count, offset)
 }
 
+func RegisterAggregateUDF[StateType any](c *sql.Conn, name string, f AggregateFunction[StateType]) error {
+	err := c.Raw(func(anyConn any) error {
+		conn, ok := anyConn.(driver.Conn)
+		if !ok {
+			return driver.ErrBadConn
+		}
+		return RegisterAggregateUDFConn(conn, name, f)
+	})
+	return err
+}
+
 func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f AggregateFunction[StateType]) error {
 	duckConn, err := getConn(c)
 	if err != nil {
@@ -110,20 +122,18 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 
 	// Add input parameters.
 	for _, inputType := range conf.InputTypes {
-		sqlType := strings.ToUpper(inputType)
-		logicalType, err := createLogicalFromSQLType(sqlType)
+		logicalType, err := createLogicalFromSQLType(inputType)
 		if err != nil {
-			return unsupportedTypeError(sqlType)
+			return unsupportedTypeError(inputType)
 		}
 		C.duckdb_aggregate_function_add_parameter(function, logicalType)
 		C.duckdb_destroy_logical_type(&logicalType)
 	}
 
 	// Add result parameter.
-	sqlType := strings.ToUpper(conf.ResultType)
-	logicalType, err := createLogicalFromSQLType(sqlType)
+	logicalType, err := createLogicalFromSQLType(conf.ResultType)
 	if err != nil {
-		return unsupportedTypeError(sqlType)
+		return unsupportedTypeError(conf.ResultType)
 	}
 	C.duckdb_aggregate_function_set_return_type(function, logicalType)
 	C.duckdb_destroy_logical_type(&logicalType)
@@ -228,3 +238,42 @@ void duckdb_aggregate_function_set_extra_info(duckdb_aggregate_function aggregat
 void *duckdb_aggregate_function_get_extra_info(duckdb_function_info info);
 void duckdb_aggregate_function_set_error(duckdb_function_info info, const char *error);
 */
+
+func Must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func AggregateTestConn[T any](name string, fn AggregateFunction[T]) (*sql.DB, func()) {
+	connector := Must(NewConnector("?max_memory=100M", nil))
+
+	conn := Must(connector.Connect(context.Background()))
+
+	if err := RegisterAggregateUDFConn(conn, name, fn); err != nil {
+		panic(err)
+	}
+
+	db := sql.OpenDB(connector)
+	return db, func() {
+		db.Close()
+		conn.Close()
+	}
+}
+
+func ScalarTestConn(name string, fn ScalarFunction) (*sql.DB, func()) {
+	connector := Must(NewConnector("?max_memory=100M", nil))
+
+	conn := Must(connector.Connect(context.Background()))
+
+	if err := RegisterScalarUDFConn(conn, name, fn); err != nil {
+		panic(err)
+	}
+
+	db := sql.OpenDB(connector)
+	return db, func() {
+		db.Close()
+		conn.Close()
+	}
+}
