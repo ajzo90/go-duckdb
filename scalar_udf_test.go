@@ -13,25 +13,6 @@ import (
 	"testing"
 )
 
-type MySum struct{}
-
-func (udf MySum) Config() ScalarFunctionConfig {
-	return ScalarFunctionConfig{
-		InputTypes: []string{INT, INT},
-		ResultType: INT,
-	}
-}
-
-func (udf MySum) Exec(in *UDFDataChunk, out *Vector) error {
-	a, _ := GetVector[int32](in, 0)
-	b, _ := GetVector[int32](in, 1)
-
-	for i := range a {
-		Append(out, a[i]+b[i])
-	}
-	return nil
-}
-
 type MyConcat struct {
 }
 
