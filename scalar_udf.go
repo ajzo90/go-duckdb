@@ -27,6 +27,7 @@ type ScalarFunctionConfig struct {
 	InputTypes      []string
 	ResultType      string
 	SpecialHandling bool
+	Volatile        bool
 }
 
 type ScalarFunction interface {
@@ -105,7 +106,12 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 	C.duckdb_scalar_function_set_extra_info(
 		scalarFunction,
 		cMem.store(function),
-		C.duckdb_delete_callback_t(C.scalar_udf_delete_callback))
+		C.duckdb_delete_callback_t(C.scalar_udf_delete_callback),
+	)
+
+	if function.Config().Volatile {
+		C.duckdb_scalar_function_set_volatile(scalarFunction)
+	}
 
 	// Register the function.
 	state := C.duckdb_register_scalar_function(driverConn.duckdbCon, scalarFunction)
