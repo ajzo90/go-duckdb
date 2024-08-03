@@ -345,10 +345,8 @@ func getBindValue(typ C.duckdb_type, v C.duckdb_value) (any, error) {
 	case C.DUCKDB_TYPE_BOOLEAN:
 		if v == nil {
 			return false, nil
-		} else if C.duckdb_get_int64(v) != 0 {
-			return true, nil
 		} else {
-			return false, nil
+			return C.duckdb_get_bool(v), nil
 		}
 	case C.DUCKDB_TYPE_BIGINT:
 		if v == nil {
@@ -356,7 +354,15 @@ func getBindValue(typ C.duckdb_type, v C.duckdb_value) (any, error) {
 		}
 		return int64(C.duckdb_get_int64(v)), nil
 	case C.DUCKDB_TYPE_DOUBLE:
-		panic("not implemented")
+		if v == nil {
+			return float64(0), nil
+		}
+		return float64(C.duckdb_get_double(v)), nil
+	case C.DUCKDB_TYPE_FLOAT:
+		if v == nil {
+			return float32(0), nil
+		}
+		return float32(C.duckdb_get_float(v)), nil
 	case C.DUCKDB_TYPE_VARCHAR:
 		if v == nil {
 			return "", nil
