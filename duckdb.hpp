@@ -10,11 +10,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #pragma once
 #define DUCKDB_AMALGAMATION 1
-#define DUCKDB_SOURCE_ID "e42a9f4279"
-#define DUCKDB_VERSION "v1.0.1-dev3700"
+#define DUCKDB_SOURCE_ID "9862e0d4ed"
+#define DUCKDB_VERSION "v1.0.1-dev3720"
 #define DUCKDB_MAJOR_VERSION 1
 #define DUCKDB_MINOR_VERSION 0
-#define DUCKDB_PATCH_VERSION "1-dev3700"
+#define DUCKDB_PATCH_VERSION "1-dev3720"
 //===----------------------------------------------------------------------===//
 //                         DuckDB
 //
@@ -3110,17 +3110,17 @@ TO UnsafeNumericCast(FROM in) {
 template <class TO>
 TO UnsafeNumericCast(double val) {
 #ifdef DEBUG
-	return LossyNumericCast<TO>(val);
-#endif
 	return NumericCast<TO>(val);
+#endif
+	return LossyNumericCast<TO>(val);
 }
 
 template <class TO>
 TO UnsafeNumericCast(float val) {
 #ifdef DEBUG
-	return LossyNumericCast<TO>(val);
-#endif
 	return NumericCast<TO>(val);
+#endif
+	return LossyNumericCast<TO>(val);
 }
 
 } // namespace duckdb
@@ -21883,14 +21883,17 @@ protected:
 } // namespace duckdb
 
 
+
 namespace duckdb {
+class PhysicalOperator;
+class ThreadContext;
 
 //! Execute a task within an executor, including exception handling
 //! This should be used within queries
 class ExecutorTask : public Task {
 public:
 	ExecutorTask(Executor &executor, shared_ptr<Event> event);
-	ExecutorTask(ClientContext &context, shared_ptr<Event> event);
+	ExecutorTask(ClientContext &context, shared_ptr<Event> event, const PhysicalOperator &op);
 	~ExecutorTask() override;
 
 public:
@@ -21900,6 +21903,8 @@ public:
 public:
 	Executor &executor;
 	shared_ptr<Event> event;
+	unique_ptr<ThreadContext> thread_context;
+	optional_ptr<const PhysicalOperator> op;
 
 public:
 	virtual TaskExecutionResult ExecuteTask(TaskExecutionMode mode) = 0;
