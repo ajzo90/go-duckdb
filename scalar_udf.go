@@ -19,7 +19,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"strings"
 	"unsafe"
 )
 
@@ -65,6 +64,9 @@ func scalar_udf_delete_callback(data unsafe.Pointer) {
 
 var errScalarUDFNoName = fmt.Errorf("errScalarUDFNoName")
 
+// logical => SQL. Create a dummy scalar function and run `select typeof (my_func_logical_type());`
+// SQL => logical. SELECT null::TYPE_SQL and extract logical type from result
+
 func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) error {
 	driverConn, err := getConn(c)
 	if err != nil {
@@ -80,21 +82,20 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 
 	// Add input parameters.
 	for _, inputType := range function.Config().InputTypes {
-		sqlType := strings.ToUpper(inputType)
-		logicalType, err := createLogicalFromSQLType(sqlType)
+		logicalType, err := sqlToLogical(inputType)
 		if err != nil {
-			return unsupportedTypeError(sqlType)
+			return unsupportedTypeError(inputType)
 		}
+
 		//C.duckdb_scalar_function_set_varargs(scalarFunction, logicalType)
 		C.duckdb_scalar_function_add_parameter(scalarFunction, logicalType)
 		C.duckdb_destroy_logical_type(&logicalType)
 	}
 
 	// Add result parameter.
-	sqlType := strings.ToUpper(function.Config().ResultType)
-	logicalType, err := createLogicalFromSQLType(sqlType)
+	logicalType, err := sqlToLogical(function.Config().ResultType)
 	if err != nil {
-		return unsupportedTypeError(sqlType)
+		return unsupportedTypeError(function.Config().ResultType)
 	}
 	C.duckdb_scalar_function_set_return_type(scalarFunction, logicalType)
 	C.duckdb_destroy_logical_type(&logicalType)
@@ -117,7 +118,7 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 	state := C.duckdb_register_scalar_function(driverConn.duckdbCon, scalarFunction)
 	C.duckdb_destroy_scalar_function(&scalarFunction)
 
-	if state == C.DuckDBError {
+	if state != C.DuckDBSuccess {
 		return fmt.Errorf("failed to register scalar UDF")
 		//errDriver := C.duckdb_error_message(driverConn.duckdbCon)
 		//return getError(errDriver, nil)

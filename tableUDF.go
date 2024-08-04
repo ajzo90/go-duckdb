@@ -74,6 +74,11 @@ func RegisterTableUDFConn(c driver.Conn, _name string, function TableFunction) e
 	if err != nil {
 		return err
 	}
+	return registerTableUDFConn(duckConn.duckdbCon, _name, function)
+}
+
+func registerTableUDFConn(duckConn C.duckdb_connection, _name string, function TableFunction) error {
+
 	name := C.CString(_name)
 	defer C.free(unsafe.Pointer(name))
 
@@ -87,7 +92,7 @@ func RegisterTableUDFConn(c driver.Conn, _name string, function TableFunction) e
 	C.duckdb_table_function_set_extra_info(tableFunction, cMem.store(function), C.duckdb_delete_callback_t(C.udf_destroy_data))
 
 	for _, v := range function.Arguments() {
-		lt, err := createLogicalFromSQLType(SqlTypeFromValue(v))
+		lt, err := sqlToLogical(SqlTypeFromValue(v))
 		if err != nil {
 			return err
 		}
@@ -96,7 +101,7 @@ func RegisterTableUDFConn(c driver.Conn, _name string, function TableFunction) e
 	}
 
 	for name, v := range function.NamedArguments() {
-		lt, err := createLogicalFromSQLType(SqlTypeFromValue(v))
+		lt, err := sqlToLogical(SqlTypeFromValue(v))
 		if err != nil {
 			return err
 		}
@@ -106,7 +111,7 @@ func RegisterTableUDFConn(c driver.Conn, _name string, function TableFunction) e
 		C.duckdb_destroy_logical_type(&lt)
 		C.free(unsafe.Pointer(argName))
 	}
-	state := C.duckdb_register_table_function(duckConn.duckdbCon, tableFunction)
+	state := C.duckdb_register_table_function(duckConn, tableFunction)
 	if state != 0 {
 		return invalidTableFunctionError()
 	}
@@ -171,7 +176,7 @@ func _udf_bind(info C.duckdb_bind_info) error {
 	}
 
 	for _, v := range table.Columns {
-		logical, err := createLogicalFromSQLType(v.Type)
+		logical, err := sqlToLogical(v.Type)
 		if err != nil {
 			return err
 		}
