@@ -188,7 +188,18 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 
 	C.duckdb_aggregate_function_set_extra_info(function, cMem.store(internal), C.duckdb_delete_callback_t(C.go_duckdb_aggregate_delete_callback))
 
-	status := C.duckdb_register_aggregate_function(duckConn.duckdbCon, function)
+	// Register the function. API without overloading
+	//status := C.duckdb_register_aggregate_function(duckConn.duckdbCon, function)
+	//C.duckdb_destroy_aggregate_function(&function)
+
+	// API (function set) for overloading
+	var function_set = C.duckdb_create_aggregate_function_set(functionName)
+	C.duckdb_add_aggregate_function_to_set(function_set, function)
+	C.duckdb_destroy_aggregate_function(&function)
+
+	status := C.duckdb_register_aggregate_function_set(duckConn.duckdbCon, function_set)
+	C.duckdb_destroy_aggregate_function_set(&function_set)
+
 	if status != C.DuckDBSuccess {
 		return fmt.Errorf("failed to register aggregate function")
 	}
