@@ -114,9 +114,17 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 		C.duckdb_scalar_function_set_volatile(scalarFunction)
 	}
 
-	// Register the function.
-	state := C.duckdb_register_scalar_function(driverConn.duckdbCon, scalarFunction)
+	// Register the function. API without overloading
+	//state := C.duckdb_register_scalar_function(driverConn.duckdbCon, scalarFunction)
+	//C.duckdb_destroy_scalar_function(&scalarFunction)
+
+	// API (function set) for overloading
+	var function_set = C.duckdb_create_scalar_function_set(functionName)
+	C.duckdb_add_scalar_function_to_set(function_set, scalarFunction)
 	C.duckdb_destroy_scalar_function(&scalarFunction)
+
+	state := C.duckdb_register_scalar_function_set(driverConn.duckdbCon, function_set)
+	C.duckdb_destroy_scalar_function_set(&function_set)
 
 	if state != C.DuckDBSuccess {
 		return fmt.Errorf("failed to register scalar UDF")
