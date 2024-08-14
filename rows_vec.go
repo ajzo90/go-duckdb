@@ -107,18 +107,29 @@ func createDataChunk(l *logicalTypesWrap) C.duckdb_data_chunk {
 	return C.duckdb_create_data_chunk((*C.duckdb_logical_type)(l.ptr), C.idx_t(len(l.types)))
 }
 
+func (r *Rows) Err() error {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+	return r.err
+}
+
 func (r *Rows) NextChunk(c *Chunk) error {
 	c.Close()
 	r.mtx.Lock()
 	defer r.mtx.Unlock()
+
+	if r.err != nil {
+		return r.err
+	}
 
 	// load logical types
 	//_ = r.prepLogicalTypes(len(r.chunk.columns))
 
 	c.chunk = C.duckdb_stream_fetch_chunk(r.res)
 	if c.chunk == nil {
+		r.err = io.EOF
 		c.Close()
-		return io.EOF
+		return r.err
 	}
 	return nil
 }

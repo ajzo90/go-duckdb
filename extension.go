@@ -17,7 +17,18 @@ type Conn struct {
 
 type Rows struct {
 	mtx sync.Mutex
+	err error
 	*rows
+}
+
+func (c *Conn) Exec(q string) (driver.Result, error) {
+	ctx := context.Background()
+	stmt, err := c.PrepareContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+	return stmt.Exec(nil)
 }
 
 func (c *Connector) ConnectRaw(ctx context.Context) (*Conn, error) {
