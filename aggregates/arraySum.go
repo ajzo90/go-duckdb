@@ -1,6 +1,7 @@
 package aggregates
 
 import (
+	"fmt"
 	"github.com/marcboeker/go-duckdb"
 )
 
@@ -8,12 +9,16 @@ import (
 type ArraySumAggregateFunc struct {
 }
 
-type ArraySumAggregateState [4]float32
+const vecSize = 32
+
+type ArraySumAggregateState [vecSize]float32
+
+var vecSqlType = fmt.Sprintf("FLOAT[%d]", vecSize)
 
 func (m ArraySumAggregateFunc) Config() duckdb.AggregateFunctionConfig {
 	return duckdb.AggregateFunctionConfig{
-		InputTypes: []string{"FLOAT[4]"},
-		ResultType: "FLOAT[4]",
+		InputTypes: []string{vecSqlType},
+		ResultType: vecSqlType,
 	}
 }
 
@@ -25,18 +30,22 @@ func (m ArraySumAggregateFunc) Update(aggs []*ArraySumAggregateState, chunk *duc
 	x := duckdb.ArrayType[float32]{}
 	_ = x.Load(chunk, 0)
 
-	for i := range aggs {
-		row := x.GetRow(i)
-		for j := range row {
-			aggs[i][j] += row[j]
+	for i := range len(aggs) {
+		var state = aggs[i]
+		row := x.GetRow(i)[:len(state)]
+		for i := range row {
+			state[i] += row[i]
 		}
 	}
+
 }
 
 func (m ArraySumAggregateFunc) Combine(source, target []*ArraySumAggregateState) {
 	for i := range source {
-		for j := range source[i] {
-			target[i][j] += source[i][j]
+		var from = source[i]
+		var to = target[i][:len(from)]
+		for j := range from {
+			to[j] += from[j]
 		}
 	}
 }
@@ -45,9 +54,10 @@ func (m ArraySumAggregateFunc) Finalize(states []*ArraySumAggregateState, out *d
 	x := duckdb.ArrayType[float32]{}
 	_ = x.LoadVec(out, len(states))
 	for i := range states {
-		row := x.GetRow(i)
+		var state = states[i]
+		row := x.GetRow(i)[:len(state)]
 		for j := range row {
-			row[j] = states[i][j]
+			row[j] = state[j]
 		}
 	}
 }
