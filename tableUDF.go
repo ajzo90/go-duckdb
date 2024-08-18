@@ -27,6 +27,10 @@ import (
 	"unsafe"
 )
 
+func ColDef(name string, typ string) ColumnDef {
+	return ColumnDef{Name: name, Type: typ}
+}
+
 type (
 	ColumnDef struct {
 		Name string
@@ -69,15 +73,19 @@ func RegisterTableUDF(c *sql.Conn, name string, function TableFunction) error {
 	})
 }
 
-func RegisterTableUDFConn(c driver.Conn, _name string, function TableFunction) error {
+func RegisterTableUDFConn(c driver.Conn, name string, function TableFunction) error {
+	return RegisterTableUDFConnPushdown(c, name, function, true)
+}
+
+func RegisterTableUDFConnPushdown(c driver.Conn, name string, function TableFunction, pushdown bool) error {
 	duckConn, err := getConn(c)
 	if err != nil {
 		return err
 	}
-	return registerTableUDFConn(duckConn.duckdbCon, _name, function)
+	return registerTableUDFConn(duckConn.duckdbCon, name, function, pushdown)
 }
 
-func registerTableUDFConn(duckConn C.duckdb_connection, _name string, function TableFunction) error {
+func registerTableUDFConn(duckConn C.duckdb_connection, _name string, function TableFunction, pushdown bool) error {
 
 	name := C.CString(_name)
 	defer C.free(unsafe.Pointer(name))
@@ -88,7 +96,7 @@ func registerTableUDFConn(duckConn C.duckdb_connection, _name string, function T
 	C.duckdb_table_function_set_init(tableFunction, C.init(C.udf_init))
 	C.duckdb_table_function_set_local_init(tableFunction, C.init(C.udf_local_init))
 	C.duckdb_table_function_set_function(tableFunction, C.callback(C.udf_callback))
-	C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(true))
+	C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(pushdown))
 	C.duckdb_table_function_set_extra_info(tableFunction, cMem.store(function), C.duckdb_delete_callback_t(C.udf_destroy_data))
 
 	for _, v := range function.Arguments() {

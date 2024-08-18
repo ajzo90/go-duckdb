@@ -87,6 +87,21 @@ func (d *Vector) AppendListEntry(n int) {
 	Append(d, entry)
 }
 
+func AppendRow1[T1 validTypes](ch *UDFDataChunk, v1 T1) {
+	Append(&ch.Columns[0], v1)
+}
+
+func AppendRow2[T1, T2 validTypes](ch *UDFDataChunk, v1 T1, v2 T2) {
+	Append(&ch.Columns[0], v1)
+	Append(&ch.Columns[1], v2)
+}
+
+func AppendRow3[T1, T2, T3 validTypes](ch *UDFDataChunk, v1 T1, v2 T2, v3 T3) {
+	Append(&ch.Columns[0], v1)
+	Append(&ch.Columns[1], v2)
+	Append(&ch.Columns[2], v3)
+}
+
 func Append[T validTypes](vec *Vector, v T) {
 	arr := (*[1 << 31]T)(vec.data)
 	arr[vec.pos] = v
