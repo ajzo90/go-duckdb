@@ -21,8 +21,7 @@ func (e *Enum) Serialize(b []byte) []byte {
 	return b
 }
 
-func DeserializeEnum(b []byte) *Enum {
-	e := NewEnum()
+func (e *Enum) tryDeserialize(b []byte) {
 	for len(b) > 0 {
 		sz, n := binary.Uvarint(b)
 		if n <= 0 {
@@ -32,14 +31,15 @@ func DeserializeEnum(b []byte) *Enum {
 		e.Register(b[:sz])
 		b = b[sz:]
 	}
-	return e
 }
 
-func NewEnum() *Enum {
-	return &Enum{
+func NewEnum(v []byte) *Enum {
+	e := &Enum{
 		values: make([]string, 0, 1024),
 		m:      make(map[uint64]uint32),
 	}
+	e.tryDeserialize(v)
+	return e
 }
 
 func (e *Enum) Names() []string {

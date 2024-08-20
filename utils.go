@@ -13,6 +13,9 @@ import (
 )
 
 func StringifyEnum(values []string) string {
+	if len(values) == 0 {
+		return `ENUM('')`
+	}
 	var b = make([]byte, 0, 4096)
 	b = append(b, "ENUM("...)
 	for i, v := range values {
@@ -23,6 +26,7 @@ func StringifyEnum(values []string) string {
 		b = append(b, strings.ReplaceAll(v, "'", "''")...)
 		b = append(b, '\'')
 	}
+
 	b = append(b, ')')
 	return string(b)
 }
