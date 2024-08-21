@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"database/sql/driver"
 	"iter"
 )
 
@@ -62,4 +63,38 @@ func IterTableFunc[T any](it iter.Seq[T], mapper func(chunk *UDFDataChunk, v T),
 		}
 		return chunk.Capacity
 	}}
+}
+
+type Tuple[T1, T2, T3, T4, T5, T6 validTypes] struct {
+	V1 T1
+	V2 T2
+	V3 T3
+	V4 T4
+	V5 T5
+	V6 T6
+}
+
+func RegisterUDFFromIterator[T1, T2, T3, T4, T5, T6 validTypes](conn driver.Conn, name string, iter iter.Seq[Tuple[T1, T2, T3, T4, T5, T6]]) error {
+	return RegisterTableUDFConnPushdown(conn, name, _UDFFromIterator(iter), false)
+}
+
+func _UDFFromIterator[T1, T2, T3, T4, T5, T6 validTypes](iter iter.Seq[Tuple[T1, T2, T3, T4, T5, T6]]) TableFunction {
+
+	var names = []string{"v1", "v2", "v3", "v4", "v5", "v6"}
+
+	return IterTableFunc(iter, func(ch *UDFDataChunk, v Tuple[T1, T2, T3, T4, T5, T6]) {
+		Append(&ch.Columns[0], v.V1)
+		Append(&ch.Columns[1], v.V2)
+		Append(&ch.Columns[2], v.V3)
+		Append(&ch.Columns[3], v.V4)
+		Append(&ch.Columns[4], v.V5)
+		Append(&ch.Columns[5], v.V6)
+	},
+		ColDef(names[0], SqlTypeFromValue(*new(T1))),
+		ColDef(names[1], SqlTypeFromValue(*new(T2))),
+		ColDef(names[2], SqlTypeFromValue(*new(T3))),
+		ColDef(names[3], SqlTypeFromValue(*new(T4))),
+		ColDef(names[4], SqlTypeFromValue(*new(T5))),
+		ColDef(names[5], SqlTypeFromValue(*new(T6))),
+	)
 }
