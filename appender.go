@@ -31,12 +31,9 @@ type Appender struct {
 
 // NewAppenderFromConn returns a new Appender from a DuckDB driver connection.
 func NewAppenderFromConn(driverConn driver.Conn, schema, table string) (*Appender, error) {
-	con, ok := driverConn.(*conn)
-	if !ok {
-		return nil, getError(errAppenderInvalidCon, nil)
-	}
-	if con.closed {
-		return nil, getError(errAppenderClosedCon, nil)
+	con, err := getConn(driverConn)
+	if err != nil {
+		return nil, err
 	}
 
 	var cSchema *C.char

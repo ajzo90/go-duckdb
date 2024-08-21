@@ -47,12 +47,23 @@ func (s *stmt) QueryContextRaw(ctx context.Context, args []driver.NamedValue) (*
 	return &Rows{rows: r.(*rows)}, nil
 }
 
-func getConn(c any) (*conn, error) {
+func _getConn(c any) (*conn, bool) {
 	if co, ok := c.(*conn); ok {
-		return co, nil
+		return co, true
 	} else if co, ok := c.(*Conn); ok {
-		return &co.conn, nil
+		return &co.conn, true
 	} else {
-		return nil, driver.ErrBadConn
+		return nil, false
 	}
+}
+
+func getConn(c any) (*conn, error) {
+	con, ok := _getConn(c)
+	if !ok {
+		return nil, getError(errAppenderInvalidCon, nil)
+	}
+	if con.closed {
+		return nil, getError(errAppenderClosedCon, nil)
+	}
+	return con, nil
 }
