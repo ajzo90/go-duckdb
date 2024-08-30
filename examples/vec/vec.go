@@ -19,10 +19,7 @@ func main() {
 WITH cities(Name, Id) AS (VALUES ('Amsterdam', 1), ('London', 2))
 SELECT *, version() FROM cities`
 
-	stmt := Must(conn.PrepareContext(context.Background(), q))
-	defer stmt.Close()
-
-	rows := Must(stmt.QueryContextRaw(context.Background(), []driver.NamedValue{}))
+	rows := Must(conn.ExtendedQueryContext(context.Background(), q, []driver.NamedValue{}))
 	defer rows.Close()
 
 	var ch duckdb.Chunk

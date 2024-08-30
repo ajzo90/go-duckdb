@@ -11,6 +11,14 @@ func (c *conn) PrepareContext(ctx context.Context, cmd string) (*stmt, error) {
 	return s.(*stmt), err
 }
 
+func (c *conn) ExtendedQueryContext(ctx context.Context, cmd string, args []driver.NamedValue) (*Rows, error) {
+	r, err := c.QueryContext(ctx, cmd, args)
+	if err != nil {
+		return nil, err
+	}
+	return &Rows{rows: r.(*rows)}, nil
+}
+
 type Conn struct {
 	conn
 }
@@ -22,13 +30,7 @@ type Rows struct {
 }
 
 func (c *Conn) Exec(q string) (driver.Result, error) {
-	ctx := context.Background()
-	stmt, err := c.PrepareContext(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer stmt.Close()
-	return stmt.Exec(nil)
+	return c.ExecContext(context.Background(), q, nil)
 }
 
 func (c *Connector) ConnectRaw(ctx context.Context) (*Conn, error) {
@@ -39,13 +41,13 @@ func (c *Connector) ConnectRaw(ctx context.Context) (*Conn, error) {
 	return &Conn{conn: *con.(*conn)}, err
 }
 
-func (s *stmt) QueryContextRaw(ctx context.Context, args []driver.NamedValue) (*Rows, error) {
-	r, err := s.QueryContext(ctx, args)
-	if err != nil {
-		return nil, err
-	}
-	return &Rows{rows: r.(*rows)}, nil
-}
+//func (s *stmt) QueryContextRaw(ctx context.Context, args []driver.NamedValue) (*Rows, error) {
+//	r, err := s.QueryContext(ctx, args)
+//	if err != nil {
+//		return nil, err
+//	}
+//	return &Rows{rows: r.(*rows)}, nil
+//}
 
 func _getConn(c any) (*conn, bool) {
 	if co, ok := c.(*conn); ok {

@@ -213,10 +213,7 @@ func TestXXXX(t *testing.T) {
 WITH x(a) AS(VALUES('foo'), ('bar'), ('foo'), ('foo'))
 FROM x SELECT $json::JSON xx, a::ENUM('foo', 'bar'), typeof(xx)`
 
-	stmt, err := conn.PrepareContext(context.Background(), q)
-	require.NoError(t, err)
-
-	rows, err := stmt.QueryContextRaw(context.Background(), []driver.NamedValue{{Name: "json", Value: `{"x":1}`}})
+	rows, err := conn.ExtendedQueryContext(context.Background(), q, []driver.NamedValue{{Name: "json", Value: `{"x":1}`}})
 	require.NoError(t, err)
 
 	var ch Chunk
