@@ -11,8 +11,8 @@ func (c *conn) PrepareContext(ctx context.Context, cmd string) (*stmt, error) {
 	return s.(*stmt), err
 }
 
-func (c *conn) ExtendedQueryContext(ctx context.Context, cmd string, args []driver.NamedValue) (*Rows, error) {
-	r, err := c.QueryContext(ctx, cmd, args)
+func (c *conn) ExtendedQueryContext(ctx context.Context, q string, args []driver.NamedValue) (*Rows, error) {
+	r, err := c.QueryContext(ctx, q, args)
 	if err != nil {
 		return nil, err
 	}

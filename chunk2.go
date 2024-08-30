@@ -102,7 +102,7 @@ func AppendRow3[T1, T2, T3 validTypes](ch *UDFDataChunk, v1 T1, v2 T2, v3 T3) {
 	Append(&ch.Columns[2], v3)
 }
 
-func Append[T validTypes](vec *Vector, v T) {
+func Append[T validTypes | [32]float32](vec *Vector, v T) {
 	arr := (*[1 << 31]T)(vec.data)
 	arr[vec.pos] = v
 	vec.pos++
