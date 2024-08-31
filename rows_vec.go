@@ -178,6 +178,10 @@ func (a *ArrayType[T]) GetRow(row int) []T {
 	return a.elements[offset:][:a.arrSize]
 }
 
+func (a *ArrayType[T]) Data() []T {
+	return a.elements
+}
+
 func (m *MapType) serialize(dst []byte, format string) []byte {
 	return nil
 }
