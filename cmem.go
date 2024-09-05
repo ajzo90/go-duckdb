@@ -18,7 +18,7 @@ type ref uint64
 type mempool struct {
 	m   map[ref]any
 	ptr ref
-	mtx sync.Mutex
+	mtx sync.RWMutex
 }
 
 func (h *mempool) free(ref *ref) {
@@ -32,8 +32,8 @@ func (h *mempool) free(ref *ref) {
 }
 
 func (h *mempool) lookup(ref *ref) any {
-	h.mtx.Lock()
-	defer h.mtx.Unlock()
+	h.mtx.RLock()
+	defer h.mtx.RUnlock()
 
 	return h.m[*ref]
 }
