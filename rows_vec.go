@@ -237,7 +237,7 @@ func (a *ArrayType[T]) load(vector C.duckdb_vector, numValues int) error {
 		C.duckdb_destroy_logical_type(&logical)
 	}
 	childVector := C.duckdb_list_vector_get_child(vector)
-	__vec(&a.x, numValues*a.ArrLen, childVector)
+	__vec(&a.x, numValues*a.ArrLen, childVector, false)
 	return nil
 }
 
@@ -245,9 +245,9 @@ func (a *ArrayType[T]) LoadVec(v *Vector, size int) error {
 	return a.load(v.vector, size)
 }
 
-func (a *ArrayType[T]) LoadCtx(ctx *ExecContext, colIdx int) error {
+func (a *ArrayType[T]) LoadCtx(ctx *ExecContext, colIdx int, chunkSize int) error {
 	vector := C.duckdb_data_chunk_get_vector(ctx.input, C.idx_t(colIdx))
-	return a.load(vector, int(C.duckdb_data_chunk_get_size(ctx.input)))
+	return a.load(vector, chunkSize)
 }
 
 func (a *ArrayType[T]) LoadVecCtx(ctx *ExecContext, size int) error {
@@ -456,10 +456,12 @@ func getVector[T validTypes](typ C.duckdb_type, n int, vector C.duckdb_vector) (
 	return vec.Data, err
 }
 
-func __vec[T validTypes](v *Vec[T], n int, vector C.duckdb_vector) {
+func __vec[T validTypes](v *Vec[T], n int, vector C.duckdb_vector, zero bool) {
 	v.Data = castVec[T](vector)[:n]
 	v.Validity = validity(vector, n)
-	zeroValidity(v.Data, v.Validity)
+	if zero {
+		zeroValidity(v.Data, v.Validity)
+	}
 }
 
 func loadVector[T validTypes](v *Vec[T], typ C.duckdb_type, n int, vector C.duckdb_vector) error {
@@ -468,7 +470,7 @@ func loadVector[T validTypes](v *Vec[T], typ C.duckdb_type, n int, vector C.duck
 
 	switch resTyp := C.duckdb_get_type_id(ty); resTyp {
 	case typ:
-		__vec(v, n, vector)
+		__vec(v, n, vector, true)
 		return nil
 	default:
 		return fmt.Errorf("invalid typ in getVector %v %v", typ, resTyp)
@@ -555,7 +557,7 @@ func (d *DecimalType) GetRow(idx int) Decimal {
 
 func loadDec[T int16 | int32 | int64 | HugeInt](d *DecimalType, vector C.duckdb_vector, n int, f func(T) *big.Int) {
 	var v Vec[T]
-	__vec(&v, n, vector)
+	__vec(&v, n, vector, true)
 	d.get = func(i int) *big.Int {
 		return f(v.Data[i])
 	}
@@ -584,19 +586,19 @@ func (d *EnumType) load(vector C.duckdb_vector, numValue int) error {
 		return fmt.Errorf("invalid enum type %v", phys)
 	case C.DUCKDB_TYPE_UTINYINT:
 		var v Vec[uint8]
-		__vec(&v, numValue, vector)
+		__vec(&v, numValue, vector, true)
 		d.get = func(i int) uint32 {
 			return uint32(v.Data[i])
 		}
 	case C.DUCKDB_TYPE_USMALLINT:
 		var v Vec[uint16]
-		__vec(&v, numValue, vector)
+		__vec(&v, numValue, vector, true)
 		d.get = func(i int) uint32 {
 			return uint32(v.Data[i])
 		}
 	case C.DUCKDB_TYPE_UINTEGER:
 		var v Vec[uint32]
-		__vec(&v, numValue, vector)
+		__vec(&v, numValue, vector, true)
 		d.get = func(i int) uint32 {
 			return uint32(v.Data[i])
 		}
