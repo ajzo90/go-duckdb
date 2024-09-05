@@ -44,7 +44,18 @@ func scalar_udf_callback(info C.duckdb_function_info, input C.duckdb_data_chunk,
 	var inputChunk = acquireChunk(inputSize, input)
 	var outputChunk = acquireVector(inputSize, output)
 
-	// todo: set out validity as intersection of validity
+	// set out validity as intersection of validity
+	validity := outputChunk.Validity(inputSize)
+	for i := range inputChunk.Columns {
+		var inValidity = inputChunk.Columns[0].Validity(inputSize)[:len(validity)]
+		if i == 0 {
+			copy(validity, inValidity)
+		} else {
+			for j := range validity {
+				validity[j] &= inValidity[j]
+			}
+		}
+	}
 
 	err := scalarFunction.Exec(inputChunk, outputChunk)
 	if err != nil {

@@ -162,6 +162,7 @@ func (e *EnumType) GetBytes(i int) []byte {
 type ArrayType[T validTypes] struct {
 	elements []T
 	arrSize  int
+	validity []uint64
 }
 
 func (a *ArrayType[T]) serialize(dst []byte, format string) []byte {
@@ -180,6 +181,10 @@ func (a *ArrayType[T]) GetRow(row int) []T {
 
 func (a *ArrayType[T]) Data() []T {
 	return a.elements
+}
+
+func (a *ArrayType[T]) Validity() []uint64 {
+	return a.validity
 }
 
 func (m *MapType) serialize(dst []byte, format string) []byte {
@@ -234,6 +239,7 @@ func (a *ArrayType[T]) load(vector C.duckdb_vector, numValues int) error {
 	C.duckdb_destroy_logical_type(&logical)
 	var err error
 	a.elements, err = getVector[T](DuckdbType[T](), childSz*a.arrSize, childVector)
+	a.validity = validity(vector, numValues)
 	return err
 }
 

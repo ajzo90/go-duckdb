@@ -24,6 +24,10 @@ type Vector struct {
 	bitmask      *C.uint64_t
 }
 
+func (d *Vector) Validity(n int) []uint64 {
+	return validity(d.vector, n)
+}
+
 func AppendUUID(d *Vector, v []byte) {
 	Append(d, HugeInt(uuidToHugeInt(UUID(v))))
 }
