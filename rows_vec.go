@@ -160,9 +160,8 @@ func (e *EnumType) GetBytes(i int) []byte {
 }
 
 type ArrayType[T validTypes] struct {
-	elements []T
-	arrSize  int
-	validity []uint64
+	x      Vec[T]
+	ArrLen int
 }
 
 func (a *ArrayType[T]) serialize(dst []byte, format string) []byte {
@@ -171,20 +170,20 @@ func (a *ArrayType[T]) serialize(dst []byte, format string) []byte {
 }
 
 func (a *ArrayType[T]) Rows() int {
-	return len(a.elements) / a.arrSize
+	return len(a.x.Data) / a.ArrLen
 }
 
 func (a *ArrayType[T]) GetRow(row int) []T {
-	offset := row * a.arrSize
-	return a.elements[offset:][:a.arrSize]
+	offset := row * a.ArrLen
+	return a.x.Data[offset:][:a.ArrLen]
 }
 
 func (a *ArrayType[T]) Data() []T {
-	return a.elements
+	return a.x.Data
 }
 
 func (a *ArrayType[T]) Validity() []uint64 {
-	return a.validity
+	return a.x.Validity
 }
 
 func (m *MapType) serialize(dst []byte, format string) []byte {
@@ -232,19 +231,27 @@ func (s *StructType) Load(ch *UDFDataChunk, idx int) error {
 }
 
 func (a *ArrayType[T]) load(vector C.duckdb_vector, numValues int) error {
+	if a.ArrLen == 0 {
+		logical := C.duckdb_vector_get_column_type(vector)
+		a.ArrLen = int(C.duckdb_array_type_array_size(logical))
+		C.duckdb_destroy_logical_type(&logical)
+	}
 	childVector := C.duckdb_list_vector_get_child(vector)
-	childSz := int(C.duckdb_list_vector_get_size(vector))
-	logical := C.duckdb_vector_get_column_type(vector)
-	a.arrSize = int(C.duckdb_array_type_array_size(logical))
-	C.duckdb_destroy_logical_type(&logical)
-	var err error
-	a.elements, err = getVector[T](DuckdbType[T](), childSz*a.arrSize, childVector)
-	a.validity = validity(vector, numValues)
-	return err
+	__vec(&a.x, numValues*a.ArrLen, childVector)
+	return nil
 }
 
 func (a *ArrayType[T]) LoadVec(v *Vector, size int) error {
 	return a.load(v.vector, size)
+}
+
+func (a *ArrayType[T]) LoadCtx(ctx *ExecContext, colIdx int) error {
+	vector := C.duckdb_data_chunk_get_vector(ctx.input, C.idx_t(colIdx))
+	return a.load(vector, int(C.duckdb_data_chunk_get_size(ctx.input)))
+}
+
+func (a *ArrayType[T]) LoadVecCtx(ctx *ExecContext, size int) error {
+	return a.load(ctx.output, size)
 }
 
 func (a *ArrayType[T]) Load(ch *UDFDataChunk, colIdx int) error {
@@ -391,11 +398,11 @@ func zeroValidity[T any](buf []T, validity []uint64) {
 	ln := len(buf)
 	var z T
 	for k, bitset := range validity {
+
 		bitset = ^bitset
 		if k == ln>>6 {
 			bitset &= (1 << uint(ln&63)) - 1
 		}
-
 		for bitset != 0 {
 			idx := k<<6 + bits.TrailingZeros64(bitset)
 			buf[idx] = z

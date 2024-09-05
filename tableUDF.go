@@ -203,31 +203,6 @@ func udf_destroy_data(data unsafe.Pointer) {
 	cMem.free(ref)
 }
 
-func createEnum(names []string) C.duckdb_logical_type {
-	var alloc []byte
-	var offsets = make([]int, 0, len(names))
-	for i := range names {
-		offsets = append(offsets, len(alloc))
-		alloc = append(alloc, names[i]...)
-		alloc = append(alloc, 0) // null-termination
-	}
-	if len(names) == 0 {
-		offsets = append(offsets, len(alloc))
-		alloc = append(alloc, 0) // null-termination
-	}
-
-	colName := unsafe.Pointer(C.CBytes(alloc))
-	var ptrs = make([]unsafe.Pointer, len(offsets))
-	for i := range offsets {
-		ptrs[i] = unsafe.Add(colName, offsets[i])
-	}
-	p := (**C.char)(malloc(ptrs...))
-	typ := C.duckdb_create_enum_type(p, C.idx_t(len(ptrs)))
-	C.free(colName)
-	C.duckdb_free(unsafe.Pointer(p))
-	return typ
-}
-
 func malloc(strs ...unsafe.Pointer) unsafe.Pointer {
 	x := C.duckdb_malloc(C.size_t(len(strs)) * C.size_t(8))
 	for i, v := range strs {
@@ -279,9 +254,9 @@ func udf_local_init(info C.duckdb_init_info) {
 func udf_callback(info C.duckdb_function_info, output C.duckdb_data_chunk) {
 	scanner := cMem.lookup(getScanner(info)).(Scanner)
 
-	ch := acquireChunk(int(C.duckdb_vector_size()), output)
+	ch := AcquireChunk(int(C.duckdb_vector_size()), output)
 	size, err := scanner.Scan(ch)
-	releaseChunk(ch)
+	ReleaseChunk(ch)
 	if err != nil {
 		errstr := C.CString(err.Error())
 		C.duckdb_function_set_error(info, errstr)

@@ -24,6 +24,10 @@ type Vector struct {
 	bitmask      *C.uint64_t
 }
 
+type Vector2 struct {
+	vector C.duckdb_vector
+}
+
 func (d *Vector) Validity(n int) []uint64 {
 	return validity(d.vector, n)
 }
@@ -120,7 +124,7 @@ func rawCopy[T any](vec *Vector, v []T) int {
 	return copy(VectorData[T](vec)[vec.pos:], v)
 }
 
-func (d *Vector) init(sz int, v C.duckdb_vector, writable bool) {
+func (d *Vector) init(v C.duckdb_vector, writable bool) {
 	logicalType := C.duckdb_vector_get_column_type(v)
 	duckdbType := C.duckdb_get_type_id(logicalType)
 	C.duckdb_destroy_logical_type(&logicalType)
@@ -130,20 +134,20 @@ func (d *Vector) init(sz int, v C.duckdb_vector, writable bool) {
 	d.data = C.duckdb_vector_get_data(v)
 
 	if duckdbType == C.DUCKDB_TYPE_LIST {
-		d.childVec = acquireVector(sz, C.duckdb_list_vector_get_child(d.vector))
+		d.childVec = AcquireVector(C.duckdb_list_vector_get_child(d.vector))
 	} else if writable {
 		C.duckdb_vector_ensure_validity_writable(v)
 		d.bitmask = C.duckdb_vector_get_validity(v)
 	}
 }
 
-func acquireVector(sz int, v C.duckdb_vector) *Vector {
+func AcquireVector(v C.duckdb_vector) *Vector {
 	vec := vectorPool.Get().(*Vector)
-	vec.init(sz, v, true)
+	vec.init(v, true)
 	return vec
 }
 
-func releaseVector(v *Vector) {
+func ReleaseVector(v *Vector) {
 	vectorPool.Put(v)
 }
 
@@ -153,7 +157,7 @@ var vectorPool = sync.Pool{
 	},
 }
 
-func acquireChunk(vecSize int, chunk C.duckdb_data_chunk) *UDFDataChunk {
+func AcquireChunk(capacity int, chunk C.duckdb_data_chunk) *UDFDataChunk {
 	cols := int(C.duckdb_data_chunk_get_column_count(chunk))
 	c := chunkPool.Get().(*UDFDataChunk)
 	c.chunk = chunk
@@ -161,17 +165,17 @@ func acquireChunk(vecSize int, chunk C.duckdb_data_chunk) *UDFDataChunk {
 		c.Columns = make([]Vector, cols)
 	}
 	c.Columns = c.Columns[:cols]
-	c.Capacity = vecSize
+	c.Capacity = capacity
 	for i := range c.Columns {
-		c.Columns[i].init(vecSize, C.duckdb_data_chunk_get_vector(chunk, C.uint64_t(i)), true)
+		c.Columns[i].init(C.duckdb_data_chunk_get_vector(chunk, C.uint64_t(i)), true)
 	}
 	return c
 }
 
-func releaseChunk(ch *UDFDataChunk) {
+func ReleaseChunk(ch *UDFDataChunk) {
 	for i := range ch.Columns {
 		if ch.Columns[i].childVec != nil {
-			releaseVector(ch.Columns[i].childVec)
+			ReleaseVector(ch.Columns[i].childVec)
 			ch.Columns[i].childVec = nil
 		}
 	}

@@ -31,7 +31,32 @@ type ScalarFunctionConfig struct {
 
 type ScalarFunction interface {
 	Config() ScalarFunctionConfig
-	Exec(in *UDFDataChunk, out *Vector) error
+	Exec(ctx *ExecContext) error
+}
+
+type ExecContext struct {
+	input  C.duckdb_data_chunk
+	output C.duckdb_vector
+	ch     *Chunk
+	out    *Vector
+}
+
+func (e *ExecContext) ChunkSize() int {
+	return chunkSize(e.input)
+}
+
+func (e *ExecContext) AcquireChunk() *UDFDataChunk {
+	e.ch = AcquireChunk(e.ChunkSize(), e.input)
+	return e.ch
+}
+
+func (e *ExecContext) AcquireVector() *Vector {
+	e.out = AcquireVector(e.output)
+	return e.out
+}
+
+func UDFScalarVectorResult[T any](e *ExecContext) []T {
+	return (*[1 << 31]T)(C.duckdb_vector_get_data(e.output))[:]
 }
 
 //export scalar_udf_callback
@@ -40,32 +65,23 @@ func scalar_udf_callback(info C.duckdb_function_info, input C.duckdb_data_chunk,
 	infoX := C.duckdb_scalar_function_get_extra_info(info)
 	scalarFunction := cMem.lookup((*ref)(infoX)).(ScalarFunction)
 
-	var inputSize = chunkSize(input)
-	var inputChunk = acquireChunk(inputSize, input)
-	var outputChunk = acquireVector(inputSize, output)
+	//var inputChunk = UDFDataChunk{chunk: input, Capacity: chunkSize(input)}
+	//
+	//var outputChunk = Vector{vector: output, data: C.duckdb_vector_get_data(output)}
 
-	// set out validity as intersection of validity
-	validity := outputChunk.Validity(inputSize)
-	for i := range inputChunk.Columns {
-		var inValidity = inputChunk.Columns[0].Validity(inputSize)[:len(validity)]
-		if i == 0 {
-			copy(validity, inValidity)
-		} else {
-			for j := range validity {
-				validity[j] &= inValidity[j]
-			}
-		}
-	}
-
-	err := scalarFunction.Exec(inputChunk, outputChunk)
+	var ctx = ExecContext{input: input, output: output}
+	err := scalarFunction.Exec(&ctx)
 	if err != nil {
 		errstr := C.CString(err.Error())
 		C.duckdb_scalar_function_set_error(info, errstr)
 		C.free(unsafe.Pointer(errstr))
 	}
-
-	releaseVector(outputChunk)
-	releaseChunk(inputChunk)
+	if ctx.ch != nil {
+		ReleaseChunk(ctx.ch)
+	}
+	if ctx.out != nil {
+		ReleaseVector(ctx.out)
+	}
 }
 
 //export scalar_udf_delete_callback

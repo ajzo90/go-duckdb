@@ -159,8 +159,8 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 		},
 		updateFn: func(input C.duckdb_data_chunk, states *C.duckdb_aggregate_state) {
 			var n = C.duckdb_data_chunk_get_size(input)
-			ch := acquireChunk(int(C.duckdb_vector_size()), input)
-			defer releaseChunk(ch)
+			ch := AcquireChunk(int(C.duckdb_vector_size()), input)
+			defer ReleaseChunk(ch)
 
 			sl := (*[1 << 31]*StateType)(unsafe.Pointer(states))[:n:n]
 			f.Update(sl, ch)
@@ -173,8 +173,8 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 			f.Combine(s, t)
 		},
 		finalizeFn: func(source *C.duckdb_aggregate_state, result C.duckdb_vector, count C.idx_t, offset C.idx_t) {
-			resVec := acquireVector(int(count), result)
-			releaseVector(resVec)
+			resVec := AcquireVector(result)
+			ReleaseVector(resVec)
 
 			var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))
 
