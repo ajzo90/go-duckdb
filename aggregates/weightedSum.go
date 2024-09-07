@@ -25,9 +25,16 @@ func (m WeightedSumAggregate) Init(state *WeightedSumState) {
 func (m WeightedSumAggregate) Destroy(aggs []*WeightedSumState) {
 }
 
-func (m WeightedSumAggregate) Update(aggs []*WeightedSumState, ch *duckdb.UDFDataChunk) {
-	inputData, _ := duckdb.GetVector[int64](ch, 0)
-	weightData, _ := duckdb.GetVector[int64](ch, 1)
+func (m WeightedSumAggregate) Update(aggs []*WeightedSumState, ch *duckdb.ExecContext) {
+	sz := ch.ChunkSize()
+	x := duckdb.Vec[int64]{}
+	_ = x.LoadCtx(ch, 0, sz)
+
+	w := duckdb.Vec[int64]{}
+	_ = w.LoadCtx(ch, 1, sz)
+
+	inputData := x.Data
+	weightData := w.Data
 
 	for i := range aggs {
 		aggs[i].Sum += inputData[i] * weightData[i]
@@ -40,8 +47,8 @@ func (m WeightedSumAggregate) Combine(s, t []*WeightedSumState) {
 	}
 }
 
-func (m WeightedSumAggregate) Finalize(states []*WeightedSumState, out *duckdb.Vector) {
-	vv := duckdb.VectorData[int64](out)
+func (m WeightedSumAggregate) Finalize(states []*WeightedSumState, ctx *duckdb.ExecContext) {
+	vv := duckdb.UDFScalarVectorResult[int64](ctx)
 	for i := range states {
 		vv[i] = states[i].Sum
 	}

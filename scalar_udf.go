@@ -91,6 +91,37 @@ func scalar_udf_delete_callback(data unsafe.Pointer) {
 
 var errScalarUDFNoName = fmt.Errorf("errScalarUDFNoName")
 
+func RegisterType(c driver.Conn, inputType, targetType string, function ScalarFunction) error {
+	driverConn, err := getConn(c)
+	if err != nil {
+		return err
+	}
+
+	castFunc := C.duckdb_create_cast_function()
+
+	inputLogicalType, err := sqlToLogical(inputType)
+	if err != nil {
+		return unsupportedTypeError(inputType)
+	}
+	C.duckdb_cast_function_set_source_type(castFunc, inputLogicalType)
+	C.duckdb_destroy_logical_type(&inputLogicalType)
+
+	targetLogicalType, err := sqlToLogical(targetType)
+	if err != nil {
+		return unsupportedTypeError(inputType)
+	}
+	C.duckdb_cast_function_set_target_type(castFunc, targetLogicalType)
+	C.duckdb_destroy_logical_type(&targetLogicalType)
+
+	C.duckdb_cast_function_set_implicit_cast_cost(castFunc, C.int64_t(123))
+
+	C.duckdb_cast_function_set_function(castFunc, nil)
+
+	C.duckdb_register_cast_function(driverConn.duckdbCon, castFunc)
+
+	return nil
+}
+
 // logical => SQL. Create a dummy scalar function and run `select typeof (my_func_logical_type());`
 // SQL => logical. SELECT null::TYPE_SQL and extract logical type from result
 
@@ -139,6 +170,10 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 
 	if function.Config().Volatile {
 		C.duckdb_scalar_function_set_volatile(scalarFunction)
+	}
+
+	if function.Config().SpecialHandling {
+		C.duckdb_scalar_function_set_special_handling(scalarFunction)
 	}
 
 	// Register the function. API without overloading

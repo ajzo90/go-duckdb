@@ -15,7 +15,8 @@ func (udf Normalize) Config() duckdb.ScalarFunctionConfig {
 	}
 }
 
-func (udf Normalize) Exec(in *duckdb.UDFDataChunk, out *duckdb.Vector) error {
+func (udf Normalize) Exec(ctx *duckdb.ExecContext) error {
+	in, out := ctx.AcquireChunk(), ctx.AcquireVector()
 	var a duckdb.ArrayType[float32]
 	_ = a.Load(in, 0)
 

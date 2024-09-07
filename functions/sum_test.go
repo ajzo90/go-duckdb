@@ -19,7 +19,7 @@ func TestSum(t *testing.T) {
 	require.NoError(t, err)
 
 	var msg int
-	row := db.QueryRow(`SELECT SUM(my_sum(10, range::int)) AS msg from range(1000000)`)
+	row := db.QueryRow(`SELECT SUM(my_sum(10, range::int)) AS msg from range(1_000_000)`)
 	require.NoError(t, row.Scan(&msg))
 	require.Equal(t, 500009500000, msg)
 

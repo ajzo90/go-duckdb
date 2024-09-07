@@ -26,18 +26,24 @@ func (m ArraySumAggregateFunc) Init(stateType *ArraySumAggregateState) {
 	clear(stateType[:])
 }
 
-func (m ArraySumAggregateFunc) Update(aggs []*ArraySumAggregateState, chunk *duckdb.UDFDataChunk) {
+func (m ArraySumAggregateFunc) Update(aggs []*ArraySumAggregateState, ctx *duckdb.ExecContext) {
 	x := duckdb.ArrayType[float32]{}
-	_ = x.Load(chunk, 0)
+	_ = x.LoadCtx(ctx, 0, ctx.ChunkSize())
 
 	for i := range len(aggs) {
-		var state = aggs[i]
+		var state = aggs[i][:]
 		row := x.GetRow(i)[:len(state)]
+		for len(row) >= 4 && len(state) >= 4 {
+			state[0] += row[0]
+			state[1] += row[1]
+			state[2] += row[2]
+			state[3] += row[3]
+			row, state = row[4:], state[4:]
+		}
 		for i := range row {
 			state[i] += row[i]
 		}
 	}
-
 }
 
 func (m ArraySumAggregateFunc) Combine(source, target []*ArraySumAggregateState) {
@@ -50,9 +56,10 @@ func (m ArraySumAggregateFunc) Combine(source, target []*ArraySumAggregateState)
 	}
 }
 
-func (m ArraySumAggregateFunc) Finalize(states []*ArraySumAggregateState, out *duckdb.Vector) {
+func (m ArraySumAggregateFunc) Finalize(states []*ArraySumAggregateState, ctx *duckdb.ExecContext) {
 	x := duckdb.ArrayType[float32]{}
-	_ = x.LoadVec(out, len(states))
+	var sz = ctx.ChunkSize()
+	_ = x.LoadVecCtx(ctx, sz)
 	for i := range states {
 		var state = states[i]
 		row := x.GetRow(i)[:len(state)]

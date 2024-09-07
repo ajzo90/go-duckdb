@@ -11,7 +11,8 @@ func (udf MySum) Config() duckdb.ScalarFunctionConfig {
 	}
 }
 
-func (udf MySum) Exec(in *duckdb.UDFDataChunk, out *duckdb.Vector) error {
+func (udf MySum) Exec(ctx *duckdb.ExecContext) error {
+	in, out := ctx.AcquireChunk(), ctx.AcquireVector()
 	a, _ := duckdb.GetVector[int32](in, 0)
 	b, _ := duckdb.GetVector[int32](in, 1)
 

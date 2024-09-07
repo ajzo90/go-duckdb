@@ -33,9 +33,9 @@ type AggregateFunctionConfig struct {
 type AggregateFunction[StateType any] interface {
 	Config() AggregateFunctionConfig
 	Init(*StateType)
-	Update([]*StateType, *UDFDataChunk)
+	Update([]*StateType, *ExecContext)
 	Combine(source, target []*StateType)
-	Finalize([]*StateType, *Vector)
+	Finalize([]*StateType, *ExecContext)
 	Destroy([]*StateType)
 }
 
@@ -159,11 +159,13 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 		},
 		updateFn: func(input C.duckdb_data_chunk, states *C.duckdb_aggregate_state) {
 			var n = C.duckdb_data_chunk_get_size(input)
-			ch := AcquireChunk(int(C.duckdb_vector_size()), input)
-			defer ReleaseChunk(ch)
+			var ch = ExecContext{input: input}
 
 			sl := (*[1 << 31]*StateType)(unsafe.Pointer(states))[:n:n]
-			f.Update(sl, ch)
+			f.Update(sl, &ch)
+			if ch.ch != nil {
+				ReleaseChunk(ch.ch)
+			}
 		},
 		combineFn: func(source *C.duckdb_aggregate_state, target *C.duckdb_aggregate_state, count C.idx_t) {
 			var n = int(count)
@@ -173,12 +175,14 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 			f.Combine(s, t)
 		},
 		finalizeFn: func(source *C.duckdb_aggregate_state, result C.duckdb_vector, count C.idx_t, offset C.idx_t) {
-			resVec := AcquireVector(result)
-			ReleaseVector(resVec)
 
+			var ctx = ExecContext{output: result}
 			var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))
 
-			f.Finalize(s[offset:][:count], resVec)
+			f.Finalize(s[offset:][:count], &ctx)
+			if ctx.out != nil {
+				ReleaseVector(ctx.out)
+			}
 		},
 		destroyFn: func(source *C.duckdb_aggregate_state, count C.idx_t) {
 			var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))
@@ -273,13 +277,17 @@ func AggregateTestConn[T any](name string, fn AggregateFunction[T]) (*sql.DB, fu
 	}
 }
 
-func ScalarTestConn(name string, fn ScalarFunction) (*sql.DB, func()) {
-	connector := Must(NewConnector("?max_memory=100M", nil))
+func ScalarTestConn(name string, fn ScalarFunction, fns ...func(conn2 driver.Conn)) (*sql.DB, func()) {
+	connector := Must(NewConnector("?max_memory=4000M", nil))
 
 	conn := Must(connector.Connect(context.Background()))
 
 	if err := RegisterScalarUDFConn(conn, name, fn); err != nil {
 		panic(err)
+	}
+
+	for _, fn := range fns {
+		fn(conn)
 	}
 
 	db := sql.OpenDB(connector)

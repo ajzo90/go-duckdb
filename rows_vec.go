@@ -443,6 +443,11 @@ func (v *Vec[T]) Load(ch *UDFDataChunk, colIdx int) error {
 	return v.load(vector, ch.NumValues())
 }
 
+func (v *Vec[T]) LoadCtx(ch *ExecContext, colIdx int, chunkSize int) error {
+	vector := C.duckdb_data_chunk_get_vector(ch.input, C.idx_t(colIdx))
+	return v.load(vector, chunkSize)
+}
+
 func (v *Vec[T]) load(vector C.duckdb_vector, numValues int) error {
 	return loadVector[T](v, DuckdbType[T](), numValues, vector)
 }
