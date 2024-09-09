@@ -62,6 +62,33 @@ func cast_udf_delete_callback(data unsafe.Pointer) {
 	cMem.free((*ref)(data))
 }
 
+func RegisterType(c driver.Conn, name string, sql string) error {
+	driverConn, err := getConn(c)
+	if err != nil {
+		return err
+	}
+
+	typeName := C.CString(name)
+	defer C.free(unsafe.Pointer(typeName))
+
+	logicalType, err := sqlToLogical(sql)
+	if err != nil {
+		return err
+	}
+	defer C.duckdb_destroy_logical_type(&logicalType)
+
+	C.duckdb_logical_type_set_alias(logicalType, typeName)
+
+	status := C.duckdb_register_logical_type(driverConn.duckdbCon, logicalType, nil)
+
+	if status != C.DuckDBSuccess {
+		return fmt.Errorf("failed to register type %s", name)
+	}
+
+	return nil
+
+}
+
 func RegisterCast(c driver.Conn, function CastFunction) error {
 	driverConn, err := getConn(c)
 	if err != nil {

@@ -26,19 +26,27 @@ func (v VarcharToTinyInt) Exec(ctx *CastExecContext) error {
 	return nil
 }
 
+func Check(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
 func TestCast(t *testing.T) {
 
 	db, close := TestConn(func(conn driver.Conn) {
-		err := RegisterCast(conn, VarcharToTinyInt{})
-		if err != nil {
-			panic(err)
-		}
+		Check(RegisterCast(conn, VarcharToTinyInt{}))
+		Check(RegisterType(conn, "vec3", "float[3]"))
 	})
 	defer close()
 	is := is.New(t)
 
 	var f0 float32
-	is.NoErr(db.QueryRow("SELECT 'HELLO'::int8 from range(10)").Scan(&f0))
+	is.NoErr(db.QueryRow("SELECT 'HELLO'::TINYINT from range(10)").Scan(&f0))
 	is.Equal(float32(5), f0)
+
+	var s string
+	is.NoErr(db.QueryRow("SELECT to_json([1,2,3]::vec3)").Scan(&s))
+	is.Equal(s, "[1.0,2.0,3.0]")
 
 }
