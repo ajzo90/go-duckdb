@@ -17,7 +17,7 @@ type UDFDataChunk struct {
 
 type Vector struct {
 	vector       C.duckdb_vector
-	childVec     *Vector
+	childVecs    []*Vector
 	pos          int
 	listCapacity int
 	data         unsafe.Pointer
@@ -56,8 +56,8 @@ func VectorData[T any](vec *Vector) []T {
 	return (*[1 << 31]T)(vec.data)[:]
 }
 
-func (d *Vector) Child() *Vector {
-	return d.childVec
+func (d *Vector) Childs() []*Vector {
+	return d.childVecs
 }
 
 var chunkPool = sync.Pool{
@@ -71,8 +71,8 @@ func chunkSize(chunk C.duckdb_data_chunk) int {
 }
 
 func (d *Vector) SetListSize(newLength int) {
-	if d.childVec.listCapacity < newLength {
-		d.ReserveListSize(max(newLength, 2048, d.childVec.listCapacity*2))
+	if d.childVecs[0].listCapacity < newLength {
+		d.ReserveListSize(max(newLength, 2048, d.childVecs[0].listCapacity*2))
 	}
 	C.duckdb_list_vector_set_size(d.vector, C.idx_t(newLength))
 }
@@ -82,14 +82,17 @@ func (d *Vector) ReserveListSize(newCapacity int) {
 		return
 	}
 	C.duckdb_list_vector_reserve(d.vector, C.idx_t(newCapacity))
-	d.childVec.listCapacity = newCapacity
-	d.childVec.data = C.duckdb_vector_get_data(d.childVec.vector)
-	d.childVec.bitmask = C.duckdb_vector_get_validity(d.childVec.vector)
+	for _, v := range d.childVecs {
+		v.listCapacity = newCapacity
+		v.data = C.duckdb_vector_get_data(v.vector)
+		v.bitmask = C.duckdb_vector_get_validity(v.vector)
+	}
+
 }
 
 func (d *Vector) AppendListEntry(n int) {
 	entry := C.duckdb_list_entry{
-		offset: C.idx_t(d.childVec.pos),
+		offset: C.idx_t(d.childVecs[0].pos),
 		length: C.idx_t(n),
 	}
 	Append(d, entry)
@@ -127,17 +130,26 @@ func rawCopy[T any](vec *Vector, v []T) int {
 func (d *Vector) init(v C.duckdb_vector, writable bool) {
 	logicalType := C.duckdb_vector_get_column_type(v)
 	duckdbType := C.duckdb_get_type_id(logicalType)
-	C.duckdb_destroy_logical_type(&logicalType)
+	defer C.duckdb_destroy_logical_type(&logicalType)
 	d.pos = 0
 	d.listCapacity = 0
 	d.vector = v
 	d.data = C.duckdb_vector_get_data(v)
 
-	if duckdbType == C.DUCKDB_TYPE_LIST {
-		d.childVec = AcquireVector(C.duckdb_list_vector_get_child(d.vector))
-	} else if writable {
-		C.duckdb_vector_ensure_validity_writable(v)
-		d.bitmask = C.duckdb_vector_get_validity(v)
+	switch duckdbType {
+	case C.DUCKDB_TYPE_STRUCT:
+		childCount := int(C.duckdb_struct_type_child_count(logicalType))
+		d.childVecs = d.childVecs[:0]
+		for i := 0; i < childCount; i++ {
+			d.childVecs = append(d.childVecs, AcquireVector(C.duckdb_struct_vector_get_child(d.vector, C.idx_t(i))))
+		}
+	case C.DUCKDB_TYPE_LIST:
+		d.childVecs = append(d.childVecs[:0], AcquireVector(C.duckdb_list_vector_get_child(d.vector)))
+	default:
+		if writable {
+			C.duckdb_vector_ensure_validity_writable(v)
+			d.bitmask = C.duckdb_vector_get_validity(v)
+		}
 	}
 }
 
@@ -174,9 +186,11 @@ func AcquireChunk(capacity int, chunk C.duckdb_data_chunk) *UDFDataChunk {
 
 func ReleaseChunk(ch *UDFDataChunk) {
 	for i := range ch.Columns {
-		if ch.Columns[i].childVec != nil {
-			ReleaseVector(ch.Columns[i].childVec)
-			ch.Columns[i].childVec = nil
+		for j := range ch.Columns[i].childVecs {
+			if ch.Columns[i].childVecs[j] != nil {
+				ReleaseVector(ch.Columns[i].childVecs[j])
+				ch.Columns[i].childVecs[j] = nil
+			}
 		}
 	}
 	chunkPool.Put(ch)
