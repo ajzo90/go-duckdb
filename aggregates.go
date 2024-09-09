@@ -275,16 +275,24 @@ func AggregateTestConn[T any](name string, fn AggregateFunction[T]) (*sql.DB, fu
 		db.Close()
 		conn.Close()
 	}
+
+	return TestConn()
+
 }
 
 func ScalarTestConn(name string, fn ScalarFunction, fns ...func(conn2 driver.Conn)) (*sql.DB, func()) {
+	fns = append(fns, func(conn driver.Conn) {
+		if err := RegisterScalarUDFConn(conn, name, fn); err != nil {
+			panic(err)
+		}
+	})
+	return TestConn(fns...)
+}
+
+func TestConn(fns ...func(conn2 driver.Conn)) (*sql.DB, func()) {
 	connector := Must(NewConnector("?max_memory=4000M", nil))
 
 	conn := Must(connector.Connect(context.Background()))
-
-	if err := RegisterScalarUDFConn(conn, name, fn); err != nil {
-		panic(err)
-	}
 
 	for _, fn := range fns {
 		fn(conn)

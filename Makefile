@@ -2,10 +2,30 @@ DUCKDB_REPO=https://github.com/duckdb/duckdb.git
 DUCKDB_BRANCH=v1.0.0
 
 
-DUCKDB_VERSION := latest_2024-08-02_1471238851
+DUCKDB_VERSION := duckdb1.1
 DUCKDB_LIB_PATH := /var/tmp/duckdb-build/${DUCKDB_VERSION}
+DUCKDB_REMOTE := https://storage.googleapis.com/public-cache-bucket/duckdb-build/${DUCKDB_VERSION}
+
+PWD := $(shell pwd)
+TMPDIR := $(shell echo ${TMPDIR})
+ifndef TMPDIR
+override TMPDIR = /tmp/
+endif
+
+UNAME := $(shell uname -s)
+ifeq ($(UNAME),Linux)
+    DUCK_ENV := LD_LIBRARY_PATH=${DUCKDB_LIB_PATH}
+    DEFAULT_WORKER_PLATFORM_HOST_DOCKER := 127.0.0.1:8080
+    DUCKDB_LIB_FILENAME := libduckdb.so
+endif
+ifeq ($(UNAME),Darwin)
+    DUCK_ENV := DYLD_LIBRARY_PATH=${DUCKDB_LIB_PATH}
+    DEFAULT_WORKER_PLATFORM_HOST_DOCKER := docker.for.mac.localhost:8080
+    DUCKDB_LIB_FILENAME := libduckdb.dylib
+endif
+
 GO_BUILD_DEPS := -tags=duckdb_use_lib,no_duckdb_arrow,duckdb_scalar_udf
-GO_BUILD_ENV := CGO_LDFLAGS="-L${DUCKDB_LIB_PATH}" CGO_ENABLED=1
+GO_BUILD_ENV := CGO_CFLAGS="-I${DUCKDB_LIB_PATH}/" CGO_LDFLAGS="-L${DUCKDB_LIB_PATH}" CGO_ENABLED=1
 
 UNAME := $(shell uname -s)
 ifeq ($(UNAME),Linux)
@@ -14,6 +34,16 @@ endif
 ifeq ($(UNAME),Darwin)
 	DUCK_ENV := DYLD_LIBRARY_PATH=${DUCKDB_LIB_PATH}
 endif
+
+${DUCKDB_LIB_PATH}:
+	mkdir -p ${DUCKDB_LIB_PATH}
+	wget --quiet -P ${DUCKDB_LIB_PATH} ${DUCKDB_REMOTE}/${DUCKDB_LIB_FILENAME} ${DUCKDB_REMOTE}/duckdb.h ${DUCKDB_REMOTE}/duckdb.h
+
+duckdblib: ${DUCKDB_LIB_PATH}
+
+.PHONY: test-x
+test-x: duckdblib
+	${GO_BUILD_ENV} go test -exec "env ${DUCK_ENV}" ${GO_BUILD_DEPS} -short -v -run TestFieldLimitAgg ./aggregates/...
 
 .PHONY: install
 install:
@@ -83,4 +113,4 @@ deps.freebsd.amd64: duckdb
 .PHONY: test-agg
 test-agg:
 	echo 1
-	${GO_BUILD_ENV} go test -exec "env ${DUCK_ENV}" ${GO_BUILD_DEPS} ./... -run TestRegisterAggregate -v
+	${GO_BUILD_ENV} go test -exec "env ${DUCK_ENV}" ${GO_BUILD_DEPS} ./... -run TestCast

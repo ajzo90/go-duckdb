@@ -55,8 +55,14 @@ func (e *ExecContext) AcquireVector() *Vector {
 	return e.out
 }
 
+func GetData[T any](vec DuckdbVector) []T {
+	return (*[1 << 31]T)(C.duckdb_vector_get_data(vec))[:]
+}
+
+type DuckdbVector = C.duckdb_vector
+
 func UDFScalarVectorResult[T any](e *ExecContext) []T {
-	return (*[1 << 31]T)(C.duckdb_vector_get_data(e.output))[:]
+	return GetData[T](e.output)
 }
 
 //export scalar_udf_callback
@@ -90,37 +96,6 @@ func scalar_udf_delete_callback(data unsafe.Pointer) {
 }
 
 var errScalarUDFNoName = fmt.Errorf("errScalarUDFNoName")
-
-func RegisterType(c driver.Conn, inputType, targetType string, function ScalarFunction) error {
-	driverConn, err := getConn(c)
-	if err != nil {
-		return err
-	}
-
-	castFunc := C.duckdb_create_cast_function()
-
-	inputLogicalType, err := sqlToLogical(inputType)
-	if err != nil {
-		return unsupportedTypeError(inputType)
-	}
-	C.duckdb_cast_function_set_source_type(castFunc, inputLogicalType)
-	C.duckdb_destroy_logical_type(&inputLogicalType)
-
-	targetLogicalType, err := sqlToLogical(targetType)
-	if err != nil {
-		return unsupportedTypeError(inputType)
-	}
-	C.duckdb_cast_function_set_target_type(castFunc, targetLogicalType)
-	C.duckdb_destroy_logical_type(&targetLogicalType)
-
-	C.duckdb_cast_function_set_implicit_cast_cost(castFunc, C.int64_t(123))
-
-	C.duckdb_cast_function_set_function(castFunc, nil)
-
-	C.duckdb_register_cast_function(driverConn.duckdbCon, castFunc)
-
-	return nil
-}
 
 // logical => SQL. Create a dummy scalar function and run `select typeof (my_func_logical_type());`
 // SQL => logical. SELECT null::TYPE_SQL and extract logical type from result

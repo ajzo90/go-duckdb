@@ -1,5 +1,3 @@
-//go:build duckdb_scalar_udf
-
 package duckdb
 
 import (
@@ -23,7 +21,8 @@ func (udf MyConcat) Config() ScalarFunctionConfig {
 	}
 }
 
-func (udf MyConcat) Exec(in *UDFDataChunk, out *Vector) error {
+func (udf MyConcat) Exec(ctx *ExecContext) error {
+	in, out := ctx.AcquireChunk(), ctx.AcquireVector()
 	a, _ := GetVector[Varchar](in, 0)
 	b, _ := GetVector[Varchar](in, 1)
 
@@ -63,7 +62,8 @@ func (udf MyListShuffle) Config() ScalarFunctionConfig {
 	}
 }
 
-func (udf MyListShuffle) Exec(in *UDFDataChunk, out *Vector) error {
+func (udf MyListShuffle) Exec(ctx *ExecContext) error {
+	in, out := ctx.AcquireChunk(), ctx.AcquireVector()
 	var a ListType[Varchar]
 	_ = a.Load(in, 0)
 
@@ -73,7 +73,7 @@ func (udf MyListShuffle) Exec(in *UDFDataChunk, out *Vector) error {
 	num := int(b.Data[0])
 	out.ReserveListSize(a.Rows() * num)
 
-	child := out.Child()
+	child := out.Childs()[0]
 
 	var listSz int
 	for i := 0; i < a.Rows(); i++ {
@@ -165,7 +165,8 @@ func (udf DecimalFn) Config() ScalarFunctionConfig {
 	}
 }
 
-func (udf DecimalFn) Exec(in *UDFDataChunk, out *Vector) error {
+func (udf DecimalFn) Exec(ctx *ExecContext) error {
+	in, out := ctx.AcquireChunk(), ctx.AcquireVector()
 	var a DecimalType
 	err := a.Load(in, 0)
 	if err != nil {

@@ -161,7 +161,8 @@ func (h Xxhash64Fn) Config() duckdb.ScalarFunctionConfig {
 	}
 }
 
-func (h Xxhash64Fn) Exec(in *duckdb.UDFDataChunk, out *duckdb.Vector) error {
+func (h Xxhash64Fn) Exec(ctx *duckdb.ExecContext) error {
+	in, out := ctx.AcquireChunk(), ctx.AcquireVector()
 	strVec, _ := duckdb.GetVector[duckdb.Varchar](in, 0)
 	for _, v := range strVec {
 		duckdb.Append(out, xxhash.Sum64(v.Bytes()))
