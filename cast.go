@@ -15,7 +15,6 @@ import "C"
 import (
 	"database/sql/driver"
 	"fmt"
-	"log"
 	"unsafe"
 )
 
@@ -44,7 +43,6 @@ func (ctx *CastExecContext) Output() DuckdbVector {
 	return ctx.output
 }
 func (ctx *CastExecContext) Count() int {
-	log.Println("COIUNT")
 	return ctx.count
 }
 

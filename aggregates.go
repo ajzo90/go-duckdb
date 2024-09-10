@@ -261,23 +261,15 @@ func Must[T any](v T, err error) T {
 	return v
 }
 
-func AggregateTestConn[T any](name string, fn AggregateFunction[T]) (*sql.DB, func()) {
-	connector := Must(NewConnector("?max_memory=100M", nil))
+func AggregateTestConn[T any](name string, fn AggregateFunction[T], fns ...func(conn2 driver.Conn)) (*sql.DB, func()) {
 
-	conn := Must(connector.Connect(context.Background()))
+	fns = append(fns, func(conn driver.Conn) {
+		if err := RegisterAggregateUDFConn[T](conn, name, fn); err != nil {
+			panic(err)
+		}
+	})
 
-	if err := RegisterAggregateUDFConn(conn, name, fn); err != nil {
-		panic(err)
-	}
-
-	db := sql.OpenDB(connector)
-	return db, func() {
-		db.Close()
-		conn.Close()
-	}
-
-	return TestConn()
-
+	return TestConn(fns...)
 }
 
 func ScalarTestConn(name string, fn ScalarFunction, fns ...func(conn2 driver.Conn)) (*sql.DB, func()) {
