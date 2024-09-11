@@ -9,6 +9,9 @@ import "C"
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
+	"sync"
 	"unsafe"
 )
 
@@ -24,12 +27,54 @@ var sqlToLogical = func() func(sql string) (C.duckdb_logical_type, error) {
 	if C.duckdb_connect(db, &con) == C.DuckDBError {
 		panic(1)
 	}
+	var dbMtx sync.Mutex
+
 	//defer C.duckdb_disconnect(&con)
 
-	return func(sql string) (C.duckdb_logical_type, error) {
+	var enumCache = map[string][]unsafe.Pointer{}
+	var enumCacheMtx sync.Mutex
 
-		//createLogicalFromSQLType(strings.ToUpper(sql))
+	var f func(sql string) (C.duckdb_logical_type, error)
+
+	f = func(sql string) (C.duckdb_logical_type, error) {
+		sql = strings.ToUpper(sql)
+
+		t, ok := SQLToDuckDBMap[sql]
+		if ok {
+			return C.duckdb_create_logical_type(t), nil
+		}
+
+		// list and array of primitive types
+		if before, ok := strings.CutSuffix(sql, "]"); ok {
+			var start = strings.IndexByte(sql, '[')
+			var typ = before[:start]
+			lt, err := f(typ)
+			if err == nil {
+				defer C.duckdb_destroy_logical_type(&lt)
+				var size = before[start+1:]
+				if len(size) == 0 {
+					return C.duckdb_create_list_type(lt), nil
+				} else if sz, err := strconv.Atoi(size); err == nil {
+					return C.duckdb_create_array_type(lt, C.idx_t(sz)), nil
+				}
+			}
+		}
+
+		enumCacheMtx.Lock()
+		enumVals, ok := enumCache[sql]
+		enumCacheMtx.Unlock()
+
+		if ok {
+			strs := (**C.char)(malloc(enumVals...))
+			return C.duckdb_create_enum_type(strs, C.idx_t(len(enumVals))), nil
+		}
+
 		q := fmt.Sprintf("SELECT CAST(NULL AS %s)", sql)
+		fmt.Println("create type from sql fallback", q)
+
+		dbMtx.Lock()
+		defer dbMtx.Unlock()
+
 		var result C.duckdb_result
 
 		qStr := C.CString(q)
@@ -47,6 +92,21 @@ var sqlToLogical = func() func(sql string) (C.duckdb_logical_type, error) {
 			C.idx_t(0),
 		)
 
+		if C.duckdb_get_type_id(lt) == C.DUCKDB_TYPE_ENUM {
+			sz := int(C.duckdb_enum_dictionary_size(lt))
+
+			var values = make([]unsafe.Pointer, sz)
+			for i := 0; i < sz; i++ {
+				val := C.duckdb_enum_dictionary_value(lt, (C.idx_t)(i))
+				values[i] = unsafe.Pointer(val)
+			}
+			enumCacheMtx.Lock()
+			enumCache[sql] = values
+			enumCacheMtx.Unlock()
+		}
+
 		return lt, nil
 	}
+
+	return f
 }()
