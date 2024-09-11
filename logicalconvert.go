@@ -60,20 +60,26 @@ var sqlToLogical = func() func(sql string) (C.duckdb_logical_type, error) {
 			}
 		}
 
+	checkCache:
+
 		enumCacheMtx.Lock()
 		enumVals, ok := enumCache[sql]
 		enumCacheMtx.Unlock()
 
 		if ok {
 			strs := (**C.char)(malloc(enumVals...))
-			return C.duckdb_create_enum_type(strs, C.idx_t(len(enumVals))), nil
+			typ := C.duckdb_create_enum_type(strs, C.idx_t(len(enumVals)))
+			C.free(unsafe.Pointer(strs))
+			return typ, nil
 		}
+
+		if !dbMtx.TryLock() {
+			goto checkCache
+		}
+		defer dbMtx.Unlock()
 
 		q := fmt.Sprintf("SELECT CAST(NULL AS %s)", sql)
 		fmt.Println("create type from sql fallback", q)
-
-		dbMtx.Lock()
-		defer dbMtx.Unlock()
 
 		var result C.duckdb_result
 
@@ -101,7 +107,10 @@ var sqlToLogical = func() func(sql string) (C.duckdb_logical_type, error) {
 				values[i] = unsafe.Pointer(val)
 			}
 			enumCacheMtx.Lock()
-			enumCache[sql] = values
+			if _, ok := enumCache[sql]; !ok {
+				// only set if not set to avoid memory leak
+				enumCache[sql] = values
+			}
 			enumCacheMtx.Unlock()
 		}
 

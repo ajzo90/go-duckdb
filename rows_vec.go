@@ -28,7 +28,8 @@ func (l *logicalTypesWrap) free() {
 
 func (r *rows) prepLogicalTypes(columnCount int) logicalTypesWrap {
 	ptr, types := mallocTypeSlice(columnCount)
-	for i := 0; i < len(r.chunk.columnNames); i++ {
+	nCols := len(r.Columns())
+	for i := 0; i < nCols; i++ {
 		types[i] = C.duckdb_column_logical_type(
 			&r.res,
 			C.idx_t(i),

@@ -35,7 +35,7 @@ type rows struct {
 var id uint64
 
 func newRowsWithStmt(res C.duckdb_result, stmt *stmt) *rows {
-	columnCount := C.duckdb_column_count(&res)
+
 	r := rows{
 		res:        res,
 		stmt:       stmt,
@@ -48,14 +48,18 @@ func newRowsWithStmt(res C.duckdb_result, stmt *stmt) *rows {
 		panic("duckdb: result is not streaming")
 	}
 
-	for i := C.idx_t(0); i < columnCount; i++ {
-		columnName := C.GoString(C.duckdb_column_name(&res, i))
-		r.chunk.columnNames = append(r.chunk.columnNames, columnName)
-	}
 	return &r
 }
 
 func (r *rows) Columns() []string {
+	if len(r.chunk.columnNames) == 0 {
+		columnCount := C.duckdb_column_count(&r.res)
+		r.chunk.columnNames = make([]string, 0, int(columnCount))
+		for i := C.idx_t(0); i < columnCount; i++ {
+			columnName := C.GoString(C.duckdb_column_name(&r.res, i))
+			r.chunk.columnNames = append(r.chunk.columnNames, columnName)
+		}
+	}
 	return r.chunk.columnNames
 }
 
