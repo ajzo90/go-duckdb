@@ -23,6 +23,10 @@ type Conn struct {
 	conn
 }
 
+func UpgradeConn(connection Connection) *Conn {
+	return &Conn{conn: conn{duckdbCon: connection}}
+}
+
 type Rows struct {
 	mtx sync.Mutex
 	err error
