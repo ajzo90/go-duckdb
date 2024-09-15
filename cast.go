@@ -68,7 +68,7 @@ func RegisterType(c driver.Conn, name string, sql string) error {
 	return RegisterTypeConn(driverConn.duckdbCon, name, sql)
 }
 
-func RegisterTypeConn(duckdbCon C.duckdb_connection, name string, sql string) error {
+func RegisterTypeConn(duckdbCon Connection, name string, sql string) error {
 
 	typeName := C.CString(name)
 	defer C.free(unsafe.Pointer(typeName))
@@ -91,7 +91,9 @@ func RegisterTypeConn(duckdbCon C.duckdb_connection, name string, sql string) er
 
 }
 
-func RegisterCastConn(duckdbCon C.duckdb_connection, function CastFunction) error {
+type Connection = C.duckdb_connection
+
+func RegisterCastConn(duckdbCon Connection, function CastFunction) error {
 	castFunc := C.duckdb_create_cast_function()
 
 	cnf := function.Config()
