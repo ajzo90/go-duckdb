@@ -65,6 +65,10 @@ func RegisterType(c driver.Conn, name string, sql string) error {
 	if err != nil {
 		return err
 	}
+	return RegisterTypeConn(driverConn.duckdbCon, name, sql)
+}
+
+func RegisterTypeConn(duckdbCon C.duckdb_connection, name string, sql string) error {
 
 	typeName := C.CString(name)
 	defer C.free(unsafe.Pointer(typeName))
@@ -77,7 +81,7 @@ func RegisterType(c driver.Conn, name string, sql string) error {
 
 	C.duckdb_logical_type_set_alias(logicalType, typeName)
 
-	status := C.duckdb_register_logical_type(driverConn.duckdbCon, logicalType, nil)
+	status := C.duckdb_register_logical_type(duckdbCon, logicalType, nil)
 
 	if status != C.DuckDBSuccess {
 		return fmt.Errorf("failed to register type %s", name)
@@ -87,12 +91,7 @@ func RegisterType(c driver.Conn, name string, sql string) error {
 
 }
 
-func RegisterCast(c driver.Conn, function CastFunction) error {
-	driverConn, err := getConn(c)
-	if err != nil {
-		return err
-	}
-
+func RegisterCastConn(duckdbCon C.duckdb_connection, function CastFunction) error {
 	castFunc := C.duckdb_create_cast_function()
 
 	cnf := function.Config()
@@ -120,11 +119,19 @@ func RegisterCast(c driver.Conn, function CastFunction) error {
 
 	C.duckdb_cast_function_set_function(castFunc, C.duckdb_cast_function_t(C.cast_udf_callback))
 
-	res := C.duckdb_register_cast_function(driverConn.duckdbCon, castFunc)
+	res := C.duckdb_register_cast_function(duckdbCon, castFunc)
 
 	if res != C.DuckDBSuccess {
 		return fmt.Errorf("failed to register cast")
 	}
 
 	return nil
+}
+
+func RegisterCast(c driver.Conn, function CastFunction) error {
+	driverConn, err := getConn(c)
+	if err != nil {
+		return err
+	}
+	return RegisterCastConn(driverConn.duckdbCon, function)
 }
