@@ -33,8 +33,8 @@ type Rows struct {
 	*rows
 }
 
-func (c *Conn) Exec(q string) (driver.Result, error) {
-	return c.ExecContext(context.Background(), q, nil)
+func (c *Conn) Exec(q string, args ...driver.NamedValue) (driver.Result, error) {
+	return c.ExecContext(context.Background(), q, args)
 }
 
 func (c *Connector) ConnectRaw(ctx context.Context) (*Conn, error) {
