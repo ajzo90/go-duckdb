@@ -113,7 +113,7 @@ func (d *Vector) AppendListEntryRaw(offset, n int) {
 }
 
 func (d *Vector) AppendListEntry(n int) {
-	d.AppendListEntryRaw(n, d.childVecs[0].pos)
+	d.AppendListEntryRaw(d.childVecs[0].pos, n)
 }
 
 func AppendRow1[T1 validTypes](ch *UDFDataChunk, v1 T1) {
