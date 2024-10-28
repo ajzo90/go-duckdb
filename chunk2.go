@@ -22,6 +22,7 @@ type Vector struct {
 	listCapacity int
 	data         unsafe.Pointer
 	bitmask      *C.uint64_t
+	cap          int
 }
 
 type Vector2 struct {
@@ -56,6 +57,13 @@ func VectorData[T any](vec *Vector) []T {
 	return (*[1 << 31]T)(vec.data)[:]
 }
 
+func ValidVectorData[T any](vec *Vector, n int) []T {
+	validity := vec.Validity(n)
+	data := (*[1 << 31]T)(vec.data)[:n]
+	zeroValidity(data, validity)
+	return data
+}
+
 func (d *Vector) Childs() []*Vector {
 	return d.childVecs
 }
@@ -84,18 +92,28 @@ func (d *Vector) ReserveListSize(newCapacity int) {
 	C.duckdb_list_vector_reserve(d.vector, C.idx_t(newCapacity))
 	for _, v := range d.childVecs {
 		v.listCapacity = newCapacity
+		v.cap = newCapacity
+		//v.vector = C.duckdb_list_vector_get_child(d.vector)
 		v.data = C.duckdb_vector_get_data(v.vector)
 		v.bitmask = C.duckdb_vector_get_validity(v.vector)
+		for _, vv := range v.childVecs {
+			vv.cap = newCapacity
+			vv.data = C.duckdb_vector_get_data(vv.vector)
+			vv.bitmask = C.duckdb_vector_get_validity(vv.vector)
+		}
 	}
-
 }
 
-func (d *Vector) AppendListEntry(n int) {
+func (d *Vector) AppendListEntryRaw(offset, n int) {
 	entry := C.duckdb_list_entry{
-		offset: C.idx_t(d.childVecs[0].pos),
+		offset: C.idx_t(offset),
 		length: C.idx_t(n),
 	}
 	Append(d, entry)
+}
+
+func (d *Vector) AppendListEntry(n int) {
+	d.AppendListEntryRaw(n, d.childVecs[0].pos)
 }
 
 func AppendRow1[T1 validTypes](ch *UDFDataChunk, v1 T1) {
@@ -134,17 +152,19 @@ func (d *Vector) init(v C.duckdb_vector, writable bool) {
 	d.pos = 0
 	d.listCapacity = 0
 	d.vector = v
-	d.data = C.duckdb_vector_get_data(v)
+	d.data = C.duckdb_vector_get_data(d.vector)
 
 	switch duckdbType {
 	case C.DUCKDB_TYPE_STRUCT:
 		childCount := int(C.duckdb_struct_type_child_count(logicalType))
 		d.childVecs = d.childVecs[:0]
 		for i := 0; i < childCount; i++ {
-			d.childVecs = append(d.childVecs, AcquireVector(C.duckdb_struct_vector_get_child(d.vector, C.idx_t(i))))
+			v := AcquireVector(C.duckdb_struct_vector_get_child(d.vector, C.idx_t(i)))
+			d.childVecs = append(d.childVecs, v)
 		}
 	case C.DUCKDB_TYPE_LIST:
-		d.childVecs = append(d.childVecs[:0], AcquireVector(C.duckdb_list_vector_get_child(d.vector)))
+		v := AcquireVector(C.duckdb_list_vector_get_child(d.vector))
+		d.childVecs = append(d.childVecs[:0], v)
 	default:
 		if writable {
 			C.duckdb_vector_ensure_validity_writable(v)

@@ -79,7 +79,7 @@ var sqlToLogical = func() func(sql string) (C.duckdb_logical_type, error) {
 		defer dbMtx.Unlock()
 
 		q := fmt.Sprintf("SELECT CAST(NULL AS %s)", sql)
-		fmt.Println("create type from sql fallback", q)
+		//fmt.Println("create type from sql fallback", q)
 
 		var result C.duckdb_result
 

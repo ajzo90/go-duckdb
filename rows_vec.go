@@ -278,6 +278,10 @@ func (l *ListType[T]) Load(ch *UDFDataChunk, colIdx int) error {
 	return l.load(vector, ch.NumValues())
 }
 
+func (l *ListType[T]) LoadVec(v *Vector, size int) error {
+	return l.load(v.vector, size)
+}
+
 func List[T validTypes](ch *UDFDataChunk, colIdx int) (*ListType[T], error) {
 	var l = &ListType[T]{}
 	return l, l.Load(ch, colIdx)
@@ -657,8 +661,18 @@ type primitiveTypes interface {
 	bool | int8 | int16 | int32 | int64 | uint8 | uint16 | uint32 | uint64 | float32 | float64
 }
 
+type ListEntry duckdb_list_entry_t
+
+func (l ListEntry) Length() int {
+	return int(l.length)
+}
+
+func (l ListEntry) Offset() int {
+	return int(l.offset)
+}
+
 type validTypes interface {
-	primitiveTypes |
+	primitiveTypes | ListEntry |
 		Varchar | Date |
 		Timestamp | TimestampMilli | TimestampNano | TimestampSecond |
 		UUIDInternal | IntervalInternal |
