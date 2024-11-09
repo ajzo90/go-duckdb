@@ -164,7 +164,7 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 	C.duckdb_destroy_scalar_function_set(&function_set)
 
 	if state != C.DuckDBSuccess {
-		return fmt.Errorf("failed to register scalar UDF")
+		return fmt.Errorf("failed to register scalar UDF:%s", name)
 		//errDriver := C.duckdb_error_message(driverConn.duckdbCon)
 		//return getError(errDriver, nil)
 	}

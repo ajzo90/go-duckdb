@@ -12,6 +12,25 @@ import (
 	"strings"
 )
 
+func StringifyValue(b []byte, v string) []byte {
+	b = append(b, '\'')
+	b = append(b, strings.ReplaceAll(v, "'", "''")...)
+	b = append(b, '\'')
+	return b
+}
+func StringifyList(values []string) string {
+	var b = make([]byte, 0, 4096)
+	b = append(b, "["...)
+	for i, v := range values {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = StringifyValue(b, v)
+	}
+	b = append(b, ']')
+	return string(b)
+}
+
 func StringifyEnum(values []string) string {
 	if len(values) == 0 {
 		return `ENUM('')`
@@ -22,9 +41,7 @@ func StringifyEnum(values []string) string {
 		if i > 0 {
 			b = append(b, ',')
 		}
-		b = append(b, '\'')
-		b = append(b, strings.ReplaceAll(v, "'", "''")...)
-		b = append(b, '\'')
+		b = StringifyValue(b, v)
 	}
 
 	b = append(b, ')')
