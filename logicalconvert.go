@@ -37,9 +37,8 @@ var sqlToLogical = func() func(sql string) (C.duckdb_logical_type, error) {
 	var f func(sql string) (C.duckdb_logical_type, error)
 
 	f = func(sql string) (C.duckdb_logical_type, error) {
-		sql = strings.ToUpper(sql)
 
-		t, ok := SQLToDuckDBMap[sql]
+		t, ok := SQLToDuckDBMap[strings.ToUpper(sql)]
 		if ok {
 			return C.duckdb_create_logical_type(t), nil
 		}
