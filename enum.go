@@ -3,7 +3,6 @@ package duckdb
 import (
 	"encoding/binary"
 	"github.com/cespare/xxhash"
-	"math"
 	"sync"
 )
 
@@ -48,31 +47,32 @@ func (e *Enum) Names() []string {
 	return e.values
 }
 
-func (e *Enum) add(x uint64, s []byte) uint32 {
+func (e *Enum) add(hash uint64, s []byte) uint32 {
 	e.mtx.Lock()
 	defer e.mtx.Unlock()
 
-	if id, ok := e.m[x]; ok {
+	if id, ok := e.m[hash]; ok {
 		return id
 	}
 
 	id := uint32(len(e.values))
-	if id >= math.MaxUint16 {
-		panic("overflow in enum")
-	}
 	v := string(s)
 	e.values = append(e.values, v)
-	e.m[x] = id
+	e.m[hash] = id
 	return id
 }
 
 func (e *Enum) Register(b []byte) uint32 {
 	x := xxhash.Sum64(b)
+	return e.RegisterHash(x, b)
+}
+
+func (e *Enum) RegisterHash(hash uint64, b []byte) uint32 {
 	e.mtx.RLock()
-	id, ok := e.m[x]
+	id, ok := e.m[hash]
 	e.mtx.RUnlock()
 	if ok {
 		return id
 	}
-	return e.add(x, b)
+	return e.add(hash, b)
 }
