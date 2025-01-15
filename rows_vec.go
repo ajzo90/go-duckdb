@@ -432,6 +432,7 @@ func NewUUID(uuid []byte) UUIDInternal {
 	// Extract the last 8 bytes for lower
 	lower := binary.BigEndian.Uint64(uuid[8:])
 
+	return UUIDInternal{
 		upper: C.int64_t(upper),
 		lower: C.uint64_t(lower),
 	}
