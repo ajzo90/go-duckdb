@@ -416,9 +416,25 @@ func zeroValidity[T any](buf []T, validity []uint64) {
 	}
 }
 
+func BitGet(b []uint64, i int) bool {
+	return (b)[i>>6]&(1<<(i&63)) > 0
+}
+
 func castVec[T any](vector C.duckdb_vector) *[1 << 31]T {
 	ptr := C.duckdb_vector_get_data(vector)
 	return (*[1 << 31]T)(ptr)
+}
+
+func NewUUID(uuid []byte) UUIDInternal {
+	// Extract the first 8 bytes for upper, and flip the sign bit back
+	upper := int64(binary.BigEndian.Uint64(uuid[:8]) ^ (1 << 63))
+
+	// Extract the last 8 bytes for lower
+	lower := binary.BigEndian.Uint64(uuid[8:])
+
+		upper: C.int64_t(upper),
+		lower: C.uint64_t(lower),
+	}
 }
 
 func (u UUIDInternal) UUID() UUID {
@@ -489,7 +505,7 @@ func loadVector[T validTypes](v *Vec[T], typ C.duckdb_type, n int, vector C.duck
 		__vec(v, n, vector, true)
 		return nil
 	default:
-		return fmt.Errorf("invalid typ in getVector %v %v", typ, resTyp)
+		return fmt.Errorf("invalid typ in getVector want=%v got=%v", typ, resTyp)
 	}
 }
 
