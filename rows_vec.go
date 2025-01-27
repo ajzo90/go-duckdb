@@ -490,7 +490,10 @@ func getVector[T validTypes](typ C.duckdb_type, n int, vector C.duckdb_vector) (
 }
 
 func __vec[T validTypes](v *Vec[T], n int, vector C.duckdb_vector, zero bool) {
-	v.Data = castVec[T](vector)[:n]
+	v.Data = nil
+	if vector != nil {
+		v.Data = castVec[T](vector)[:n]
+	}
 	v.Validity = validity(vector, n)
 	if zero {
 		zeroValidity(v.Data, v.Validity)
