@@ -45,11 +45,13 @@ func (e *ExecContext) ChunkSize() int {
 	return chunkSize(e.input)
 }
 
+// deprecated: use duckdb.VecFromCtx instead
 func (e *ExecContext) AcquireChunk() *UDFDataChunk {
 	e.ch = AcquireChunk(e.ChunkSize(), e.input)
 	return e.ch
 }
 
+// deprecated: use duckdb.UDFScalarVectorResult() for fixed size data (not varchar or slice)
 func (e *ExecContext) AcquireVector() *Vector {
 	e.out = AcquireVector(e.output)
 	return e.out

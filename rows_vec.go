@@ -128,9 +128,15 @@ func (r *Rows) NextChunk(c *Chunk) error {
 
 	c.chunk = C.duckdb_stream_fetch_chunk(r.res)
 	if c.chunk == nil {
-		r.err = io.EOF
+		var err = io.EOF
+		switch x := C.duckdb_result_error_type(&r.res); x {
+		case C.DUCKDB_ERROR_INVALID:
+		default:
+			err = fmt.Errorf("error %d %s", int(x), string(C.GoString(C.duckdb_result_error(&r.res))))
+		}
+		r.err = err
 		c.Close()
-		return r.err
+		return err
 	}
 	return nil
 }
