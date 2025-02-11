@@ -105,7 +105,7 @@ func registerTableUDFConn(duckConn C.duckdb_connection, _name string, function T
 	C.duckdb_table_function_set_extra_info(tableFunction, cMem.store(funcWrap{function: function, conn: duckConn}), C.duckdb_delete_callback_t(C.udf_destroy_data))
 
 	for _, v := range function.Arguments() {
-		lt, err := sqlToLogical(duckConn, SqlTypeFromValue(v))
+		lt, err := _sqlToLogical(duckConn, SqlTypeFromValue(v))
 		if err != nil {
 			return err
 		}
@@ -114,7 +114,7 @@ func registerTableUDFConn(duckConn C.duckdb_connection, _name string, function T
 	}
 
 	for name, v := range function.NamedArguments() {
-		lt, err := sqlToLogical(duckConn, SqlTypeFromValue(v))
+		lt, err := _sqlToLogical(duckConn, SqlTypeFromValue(v))
 		if err != nil {
 			return err
 		}
@@ -190,7 +190,7 @@ func _udf_bind(info C.duckdb_bind_info) error {
 	}
 
 	for _, v := range table.Columns {
-		logical, err := sqlToLogical(wrap.conn, v.Type)
+		logical, err := _sqlToLogical(nil, v.Type)
 		if err != nil {
 			return err
 		}

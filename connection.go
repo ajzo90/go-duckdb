@@ -22,7 +22,7 @@ type conn struct {
 }
 
 func (c *conn) sqlToLogical(sql string) (C.duckdb_logical_type, error) {
-	return sqlToLogical(c.duckdbCon, sql)
+	return _sqlToLogical(nil, sql)
 }
 
 func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {

@@ -125,7 +125,7 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 
 	// Add input parameters.
 	for _, inputType := range function.Config().InputTypes {
-		logicalType, err := sqlToLogical(driverConn.duckdbCon, inputType)
+		logicalType, err := driverConn.sqlToLogical(inputType)
 		if err != nil {
 			return unsupportedTypeError(inputType)
 		}
@@ -136,7 +136,7 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 	}
 
 	// Add result parameter.
-	logicalType, err := sqlToLogical(driverConn.duckdbCon, function.Config().ResultType)
+	logicalType, err := driverConn.sqlToLogical(function.Config().ResultType)
 	if err != nil {
 		return unsupportedTypeError(function.Config().ResultType)
 	}

@@ -15,15 +15,29 @@ import (
 	"unsafe"
 )
 
-var sqlToLogical = func() func(con C.duckdb_connection, sql string) (C.duckdb_logical_type, error) {
+var _sqlToLogical = func() func(C.duckdb_connection, string) (C.duckdb_logical_type, error) {
 
 	var dbMtx sync.Mutex
 	var enumCache = map[string][]unsafe.Pointer{}
 	var enumCacheMtx sync.Mutex
 
+	var db C.duckdb_database
+	var c C.duckdb_connection
+
+	if C.duckdb_open(nil, &db) == C.DuckDBError {
+		panic(1)
+	}
+	//defer C.duckdb_close(&db)
+	if C.duckdb_connect(db, &c) == C.DuckDBError {
+		panic(1)
+	}
+
 	var f func(con C.duckdb_connection, sql string) (C.duckdb_logical_type, error)
 
 	f = func(con C.duckdb_connection, sql string) (C.duckdb_logical_type, error) {
+		if con == nil {
+			con = c
+		}
 		t, ok := SQLToDuckDBMap[strings.ToUpper(sql)]
 		if ok {
 			return C.duckdb_create_logical_type(t), nil

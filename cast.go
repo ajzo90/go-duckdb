@@ -72,7 +72,7 @@ func RegisterType(c driver.Conn, name string, sql string) error {
 		return err
 	}
 	return RegisterTypeConn(driverConn, name, func() C.duckdb_logical_type {
-		return Must(driverConn.sqlToLogical(sql))
+		return Must(_sqlToLogical(driverConn.duckdbCon, sql))
 	})
 }
 
