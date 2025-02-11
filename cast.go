@@ -126,14 +126,14 @@ func RegisterCastConn(conn *conn, function CastFunction) error {
 
 	cnf := function.Config()
 
-	inputLogicalType, err := conn.sqlToLogical(cnf.Source)
+	inputLogicalType, err := _sqlToLogical(conn.duckdbCon, cnf.Source)
 	if err != nil {
 		return unsupportedTypeError(cnf.Source)
 	}
 	C.duckdb_cast_function_set_source_type(castFunc, inputLogicalType)
 	C.duckdb_destroy_logical_type(&inputLogicalType)
 
-	targetLogicalType, err := conn.sqlToLogical(cnf.Target)
+	targetLogicalType, err := _sqlToLogical(conn.duckdbCon, cnf.Target)
 	if err != nil {
 		return unsupportedTypeError(cnf.Target)
 	}
