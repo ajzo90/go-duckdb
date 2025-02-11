@@ -15,29 +15,15 @@ import (
 	"unsafe"
 )
 
-var sqlToLogical = func() func(sql string) (C.duckdb_logical_type, error) {
+var sqlToLogical = func() func(con C.duckdb_connection, sql string) (C.duckdb_logical_type, error) {
 
-	var db C.duckdb_database
-	var con C.duckdb_connection
-
-	if C.duckdb_open(nil, &db) == C.DuckDBError {
-		panic(1)
-	}
-	//defer C.duckdb_close(&db)
-	if C.duckdb_connect(db, &con) == C.DuckDBError {
-		panic(1)
-	}
 	var dbMtx sync.Mutex
-
-	//defer C.duckdb_disconnect(&con)
-
 	var enumCache = map[string][]unsafe.Pointer{}
 	var enumCacheMtx sync.Mutex
 
-	var f func(sql string) (C.duckdb_logical_type, error)
+	var f func(con C.duckdb_connection, sql string) (C.duckdb_logical_type, error)
 
-	f = func(sql string) (C.duckdb_logical_type, error) {
-
+	f = func(con C.duckdb_connection, sql string) (C.duckdb_logical_type, error) {
 		t, ok := SQLToDuckDBMap[strings.ToUpper(sql)]
 		if ok {
 			return C.duckdb_create_logical_type(t), nil
@@ -47,7 +33,7 @@ var sqlToLogical = func() func(sql string) (C.duckdb_logical_type, error) {
 		if before, ok := strings.CutSuffix(sql, "]"); ok {
 			var start = strings.IndexByte(sql, '[')
 			var typ = before[:start]
-			lt, err := f(typ)
+			lt, err := f(con, typ)
 			if err == nil {
 				defer C.duckdb_destroy_logical_type(&lt)
 				var size = before[start+1:]
@@ -89,7 +75,9 @@ var sqlToLogical = func() func(sql string) (C.duckdb_logical_type, error) {
 
 		state := C.duckdb_query(con, qStr, &result)
 		if state == C.DuckDBError {
-			return nil, fmt.Errorf("failed to execute query")
+			err := fmt.Errorf("failed to execute query %s", q)
+			fmt.Println(err)
+			return nil, err
 		}
 
 		lt := C.duckdb_column_logical_type(

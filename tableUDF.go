@@ -85,6 +85,11 @@ func RegisterTableUDFConnPushdown(c driver.Conn, name string, function TableFunc
 	return registerTableUDFConn(duckConn.duckdbCon, name, function, pushdown)
 }
 
+type funcWrap struct {
+	function TableFunction
+	conn     C.duckdb_connection
+}
+
 func registerTableUDFConn(duckConn C.duckdb_connection, _name string, function TableFunction, pushdown bool) error {
 
 	name := C.CString(_name)
@@ -97,10 +102,10 @@ func registerTableUDFConn(duckConn C.duckdb_connection, _name string, function T
 	C.duckdb_table_function_set_local_init(tableFunction, C.init(C.udf_local_init))
 	C.duckdb_table_function_set_function(tableFunction, C.callback(C.udf_callback))
 	C.duckdb_table_function_supports_projection_pushdown(tableFunction, C.bool(pushdown))
-	C.duckdb_table_function_set_extra_info(tableFunction, cMem.store(function), C.duckdb_delete_callback_t(C.udf_destroy_data))
+	C.duckdb_table_function_set_extra_info(tableFunction, cMem.store(funcWrap{function: function, conn: duckConn}), C.duckdb_delete_callback_t(C.udf_destroy_data))
 
 	for _, v := range function.Arguments() {
-		lt, err := sqlToLogical(SqlTypeFromValue(v))
+		lt, err := sqlToLogical(duckConn, SqlTypeFromValue(v))
 		if err != nil {
 			return err
 		}
@@ -109,7 +114,7 @@ func registerTableUDFConn(duckConn C.duckdb_connection, _name string, function T
 	}
 
 	for name, v := range function.NamedArguments() {
-		lt, err := sqlToLogical(SqlTypeFromValue(v))
+		lt, err := sqlToLogical(duckConn, SqlTypeFromValue(v))
 		if err != nil {
 			return err
 		}
@@ -137,7 +142,8 @@ func udf_bind(info C.duckdb_bind_info) {
 
 func _udf_bind(info C.duckdb_bind_info) error {
 	ref := (*ref)(C.duckdb_bind_get_extra_info(info))
-	tblFunc := cMem.lookup(ref).(TableFunction)
+	wrap := cMem.lookup(ref).(funcWrap)
+	tblFunc := wrap.function
 
 	var args []any
 	for i, v := range tblFunc.Arguments() {
@@ -184,7 +190,7 @@ func _udf_bind(info C.duckdb_bind_info) error {
 	}
 
 	for _, v := range table.Columns {
-		logical, err := sqlToLogical(v.Type)
+		logical, err := sqlToLogical(wrap.conn, v.Type)
 		if err != nil {
 			return err
 		}

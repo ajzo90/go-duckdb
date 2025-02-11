@@ -409,7 +409,6 @@ func zeroValidity[T any](buf []T, validity []uint64) {
 	ln := len(buf)
 	var z T
 	for k, bitset := range validity {
-
 		bitset = ^bitset
 		if k == ln>>6 {
 			bitset &= (1 << uint(ln&63)) - 1
@@ -432,11 +431,15 @@ func castVec[T any](vector C.duckdb_vector) *[1 << 31]T {
 }
 
 func NewUUID(uuid []byte) UUIDInternal {
+	return NewUUID2(binary.BigEndian.Uint64(uuid[:8]), binary.BigEndian.Uint64(uuid[8:]))
+}
+
+func NewUUID2(lo, hi uint64) UUIDInternal {
 	// Extract the first 8 bytes for upper, and flip the sign bit back
-	upper := int64(binary.BigEndian.Uint64(uuid[:8]) ^ (1 << 63))
+	upper := int64(lo ^ (1 << 63))
 
 	// Extract the last 8 bytes for lower
-	lower := binary.BigEndian.Uint64(uuid[8:])
+	lower := hi
 
 	return UUIDInternal{
 		upper: C.int64_t(upper),
@@ -480,6 +483,10 @@ func VecFromCtx[T validTypes](ctx *ExecContext, colIdx int, chunkSize int) Vec[T
 func (v *Vec[T]) LoadCtx(ch *ExecContext, colIdx int, chunkSize int) error {
 	vector := C.duckdb_data_chunk_get_vector(ch.input, C.idx_t(colIdx))
 	return v.load(vector, chunkSize)
+}
+
+func (v *Vec[T]) LoadCastCtx(ch *CastExecContext) error {
+	return v.load(ch.input, ch.Count())
 }
 
 func (v *Vec[T]) load(vector C.duckdb_vector, numValues int) error {

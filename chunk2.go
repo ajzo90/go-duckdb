@@ -5,6 +5,7 @@ package duckdb
 */
 import "C"
 import (
+	"fmt"
 	"sync"
 	"unsafe"
 )
@@ -40,6 +41,10 @@ func AppendUUID(d *Vector, v []byte) {
 func AppendNull(d *Vector) {
 	C.duckdb_validity_set_row_invalid(d.bitmask, C.uint64_t(d.pos))
 	d.pos++
+}
+
+func SetNull(d *Vector, i int) {
+	C.duckdb_validity_set_row_invalid(d.bitmask, C.uint64_t(i))
 }
 
 func AppendBytes(d *Vector, v []byte) {
@@ -154,29 +159,56 @@ func (d *Vector) init(v C.duckdb_vector, writable bool) {
 	d.vector = v
 	d.data = C.duckdb_vector_get_data(d.vector)
 
+	if writable {
+		C.duckdb_vector_ensure_validity_writable(v)
+		d.bitmask = C.duckdb_vector_get_validity(v)
+	}
+
 	switch duckdbType {
+	case C.DUCKDB_TYPE_UNION:
+		memberCount := int(C.duckdb_union_type_member_count(logicalType))
+		if memberCount == 0 {
+			panic("empty union")
+		}
+		d.childVecs = d.childVecs[:0]
+		x := C.duckdb_struct_vector_get_child(d.vector, C.idx_t(0))
+		da := C.duckdb_vector_get_data(x)
+		fmt.Println((*[1 << 31]uint8)(da)[:10])
+
+		for i := 0; i < memberCount+1; i++ {
+			//if i < memberCount {
+			//	memberType := C.duckdb_union_type_member_type(logicalType, C.idx_t(i))
+			//	fmt.Println(i, memberType, C.duckdb_get_type_id(memberType))
+			//	C.duckdb_destroy_logical_type(&memberType)
+			//}
+
+			v := AcquireVectorWr(x, writable)
+			d.childVecs = append(d.childVecs, v)
+		}
+
 	case C.DUCKDB_TYPE_STRUCT:
 		childCount := int(C.duckdb_struct_type_child_count(logicalType))
 		d.childVecs = d.childVecs[:0]
 		for i := 0; i < childCount; i++ {
-			v := AcquireVector(C.duckdb_struct_vector_get_child(d.vector, C.idx_t(i)))
+			v := AcquireVectorWr(C.duckdb_struct_vector_get_child(d.vector, C.idx_t(i)), writable)
 			d.childVecs = append(d.childVecs, v)
 		}
 	case C.DUCKDB_TYPE_LIST:
-		v := AcquireVector(C.duckdb_list_vector_get_child(d.vector))
+		v := AcquireVectorWr(C.duckdb_list_vector_get_child(d.vector), writable)
 		d.childVecs = append(d.childVecs[:0], v)
 	default:
-		if writable {
-			C.duckdb_vector_ensure_validity_writable(v)
-			d.bitmask = C.duckdb_vector_get_validity(v)
-		}
+
 	}
 }
 
-func AcquireVector(v C.duckdb_vector) *Vector {
+func AcquireVectorWr(v C.duckdb_vector, writeble bool) *Vector {
 	vec := vectorPool.Get().(*Vector)
-	vec.init(v, true)
+	vec.init(v, writeble)
 	return vec
+}
+
+func AcquireVector(v C.duckdb_vector) *Vector {
+	return AcquireVectorWr(v, true)
 }
 
 func ReleaseVector(v *Vector) {

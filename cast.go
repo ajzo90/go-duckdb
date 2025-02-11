@@ -52,7 +52,13 @@ func cast_udf_callback(info C.duckdb_function_info, count C.idx_t, input C.duckd
 	infoX := C.duckdb_cast_function_get_extra_info(info)
 	castFunc := cMem.lookup((*ref)(infoX)).(CastFunction)
 	var ctx = CastExecContext{input: input, output: output, count: int(count), isTryCast: isTryCast}
-	return castFunc.Exec(&ctx) == nil
+	if err := castFunc.Exec(&ctx); err != nil {
+		errStr := C.CString(err.Error())
+		defer C.free(unsafe.Pointer(errStr))
+		C.duckdb_cast_function_set_error(info, errStr)
+		return false
+	}
+	return true
 }
 
 //export cast_udf_delete_callback
@@ -65,23 +71,41 @@ func RegisterType(c driver.Conn, name string, sql string) error {
 	if err != nil {
 		return err
 	}
-	return RegisterTypeConn(driverConn.duckdbCon, name, sql)
+	return RegisterTypeConn(driverConn, name, func() C.duckdb_logical_type {
+		return Must(driverConn.sqlToLogical(sql))
+	})
 }
 
-func RegisterTypeConn(duckdbCon Connection, name string, sql string) error {
+func CreateStructExample() C.duckdb_logical_type {
+	var logicalTypes = []C.duckdb_logical_type{
+		C.duckdb_create_logical_type(C.DUCKDB_TYPE_UTINYINT),
+		C.duckdb_create_logical_type(C.DUCKDB_TYPE_UBIGINT),
+		C.duckdb_create_logical_type(C.DUCKDB_TYPE_UBIGINT),
+		C.duckdb_create_logical_type(C.DUCKDB_TYPE_BLOB),
+	}
+
+	var n = []string{"tag", "lo", "hi", "c"}
+
+	var values = make([]unsafe.Pointer, 0)
+	for _, name := range n {
+		values = append(values, unsafe.Pointer(C.CString(name)))
+	}
+
+	strs := (**C.char)(malloc(values...))
+	return C.duckdb_create_struct_type(&logicalTypes[0], strs, C.idx_t(len(n)))
+}
+
+func RegisterTypeConn(conn *conn, name string, typ func() C.duckdb_logical_type) error {
+	logicalType := typ()
+
+	defer C.duckdb_destroy_logical_type(&logicalType)
 
 	typeName := C.CString(name)
 	defer C.free(unsafe.Pointer(typeName))
 
-	logicalType, err := sqlToLogical(sql)
-	if err != nil {
-		return err
-	}
-	defer C.duckdb_destroy_logical_type(&logicalType)
-
 	C.duckdb_logical_type_set_alias(logicalType, typeName)
 
-	status := C.duckdb_register_logical_type(duckdbCon, logicalType, nil)
+	status := C.duckdb_register_logical_type(conn.duckdbCon, logicalType, nil)
 
 	if status != C.DuckDBSuccess {
 		return fmt.Errorf("failed to register type %s", name)
@@ -93,19 +117,23 @@ func RegisterTypeConn(duckdbCon Connection, name string, sql string) error {
 
 type Connection = C.duckdb_connection
 
-func RegisterCastConn(duckdbCon Connection, function CastFunction) error {
+func RegisterCastConn(conn *conn, function CastFunction) error {
 	castFunc := C.duckdb_create_cast_function()
+
+	//duckdb_cast_function_set_error
+	//duckdb_cast_function_set_row_error
+	//duckdb_destroy_cast_function
 
 	cnf := function.Config()
 
-	inputLogicalType, err := sqlToLogical(cnf.Source)
+	inputLogicalType, err := conn.sqlToLogical(cnf.Source)
 	if err != nil {
 		return unsupportedTypeError(cnf.Source)
 	}
 	C.duckdb_cast_function_set_source_type(castFunc, inputLogicalType)
 	C.duckdb_destroy_logical_type(&inputLogicalType)
 
-	targetLogicalType, err := sqlToLogical(cnf.Target)
+	targetLogicalType, err := conn.sqlToLogical(cnf.Target)
 	if err != nil {
 		return unsupportedTypeError(cnf.Target)
 	}
@@ -121,7 +149,7 @@ func RegisterCastConn(duckdbCon Connection, function CastFunction) error {
 
 	C.duckdb_cast_function_set_function(castFunc, C.duckdb_cast_function_t(C.cast_udf_callback))
 
-	res := C.duckdb_register_cast_function(duckdbCon, castFunc)
+	res := C.duckdb_register_cast_function(conn.duckdbCon, castFunc)
 
 	if res != C.DuckDBSuccess {
 		return fmt.Errorf("failed to register cast")
@@ -135,5 +163,5 @@ func RegisterCast(c driver.Conn, function CastFunction) error {
 	if err != nil {
 		return err
 	}
-	return RegisterCastConn(driverConn.duckdbCon, function)
+	return RegisterCastConn(driverConn, function)
 }

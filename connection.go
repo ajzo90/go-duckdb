@@ -21,6 +21,10 @@ type conn struct {
 	tx        bool
 }
 
+func (c *conn) sqlToLogical(sql string) (C.duckdb_logical_type, error) {
+	return sqlToLogical(c.duckdbCon, sql)
+}
+
 func (c *conn) CheckNamedValue(nv *driver.NamedValue) error {
 	switch nv.Value.(type) {
 	case *big.Int, Interval:

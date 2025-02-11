@@ -122,7 +122,7 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 
 	// Add input parameters.
 	for _, inputType := range conf.InputTypes {
-		logicalType, err := sqlToLogical(inputType)
+		logicalType, err := sqlToLogical(duckConn.duckdbCon, inputType)
 		if err != nil {
 			return unsupportedTypeError(inputType)
 		}
@@ -131,7 +131,7 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 	}
 
 	// Add result parameter.
-	logicalType, err := sqlToLogical(conf.ResultType)
+	logicalType, err := sqlToLogical(duckConn.duckdbCon, conf.ResultType)
 	if err != nil {
 		return unsupportedTypeError(conf.ResultType)
 	}

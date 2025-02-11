@@ -57,6 +57,14 @@ func (e *ExecContext) AcquireVector() *Vector {
 	return e.out
 }
 
+func (e *CastExecContext) AcquireInput() *Vector {
+	return AcquireVectorWr(e.input, false)
+}
+
+func (e *CastExecContext) AcquireVector() *Vector {
+	return AcquireVector(e.output)
+}
+
 func GetData[T any](vec DuckdbVector) []T {
 	return (*[1 << 31]T)(C.duckdb_vector_get_data(vec))[:]
 }
@@ -117,7 +125,7 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 
 	// Add input parameters.
 	for _, inputType := range function.Config().InputTypes {
-		logicalType, err := sqlToLogical(inputType)
+		logicalType, err := sqlToLogical(driverConn.duckdbCon, inputType)
 		if err != nil {
 			return unsupportedTypeError(inputType)
 		}
@@ -128,7 +136,7 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 	}
 
 	// Add result parameter.
-	logicalType, err := sqlToLogical(function.Config().ResultType)
+	logicalType, err := sqlToLogical(driverConn.duckdbCon, function.Config().ResultType)
 	if err != nil {
 		return unsupportedTypeError(function.Config().ResultType)
 	}
