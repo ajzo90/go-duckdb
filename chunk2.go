@@ -47,6 +47,11 @@ func SetNull(d *Vector, i int) {
 	C.duckdb_validity_set_row_invalid(d.bitmask, C.uint64_t(i))
 }
 
+func SetValidity(d *Vector, validity []uint64) {
+	var out = (*[1 << 31]uint64)(unsafe.Pointer(d.bitmask))[:len(validity)]
+	copy(out, validity)
+}
+
 func AppendBytes(d *Vector, v []byte) {
 	sz := len(v)
 	if sz > 0 {
