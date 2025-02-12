@@ -522,7 +522,17 @@ func loadVector[T validTypes](v *Vec[T], typ C.duckdb_type, n int, vector C.duck
 		__vec(v, n, vector, true)
 		return nil
 	default:
-		return fmt.Errorf("invalid typ in getVector want=%v got=%v", typ, resTyp)
+		return fmt.Errorf("invalid typ in getVector want=%v got=%v", duckdbTypeMap[typ], duckdbTypeMap[resTyp])
+	}
+}
+
+func (v *Blob) Bytes() []byte {
+	if v.length <= stringInlineLength {
+		// inline data is stored from byte 4..16 (up to 12 bytes)
+		return (*[1 << 31]byte)(unsafe.Pointer(&v.prefix))[:v.length:v.length]
+	} else {
+		// any longer strings are stored as a pointer in `ptr`
+		return (*[1 << 31]byte)(unsafe.Pointer(v.ptr))[:v.length:v.length]
 	}
 }
 
@@ -584,6 +594,8 @@ func DuckdbType[T any]() C.duckdb_type {
 		return C.DUCKDB_TYPE_DOUBLE
 	case Varchar:
 		return C.DUCKDB_TYPE_VARCHAR
+	case Blob:
+		return C.DUCKDB_TYPE_BLOB
 	case UUIDInternal:
 		return C.DUCKDB_TYPE_UUID
 	}
@@ -706,7 +718,7 @@ func (l ListEntry) Offset() int {
 
 type validTypes interface {
 	primitiveTypes | ListEntry |
-		Varchar | Date |
+		Blob | Varchar | Date |
 		Timestamp | TimestampMilli | TimestampNano | TimestampSecond |
 		UUIDInternal | IntervalInternal |
 		HugeInt | Time | TimeTZ |
@@ -722,6 +734,7 @@ func (i IntervalInternal) Interval() Interval {
 }
 
 type (
+	Blob             duckdb_string_t
 	Varchar          duckdb_string_t
 	HugeInt          C.duckdb_hugeint
 	Timestamp        C.duckdb_timestamp
