@@ -58,6 +58,9 @@ var duckdbTypeMap = map[C.duckdb_type]string{
 	C.DUCKDB_TYPE_BIT:          "BIT",
 	C.DUCKDB_TYPE_TIME_TZ:      "TIMETZ",
 	C.DUCKDB_TYPE_TIMESTAMP_TZ: "TIMESTAMPTZ",
+	C.DUCKDB_TYPE_ANY:          "ANY",
+	C.DUCKDB_TYPE_VARINT:       "VARINT",
+	C.DUCKDB_TYPE_SQLNULL:      "SQLNULL",
 }
 
 type numericType interface {
@@ -221,6 +224,9 @@ const (
 	TIMESTAMPTZ  = "TIMESTAMPTZ"
 	UUIDTYP      = "UUID"
 	TIME_TZ      = "TIME_TZ"
+
+	ANY    = "ANY"
+	VARINT = "VARINT"
 )
 
 var SQLToDuckDBMap = map[string]C.duckdb_type{
@@ -246,4 +252,5 @@ var SQLToDuckDBMap = map[string]C.duckdb_type{
 	UHUGEINT:  C.DUCKDB_TYPE_UHUGEINT,
 	VARCHAR:   C.DUCKDB_TYPE_VARCHAR,
 	"UUID":    C.DUCKDB_TYPE_UUID,
+	ANY:       C.DUCKDB_TYPE_ANY,
 }

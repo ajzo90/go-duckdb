@@ -25,8 +25,9 @@ import (
 type ScalarFunctionConfig struct {
 	InputTypes      []string
 	ResultType      string
-	SpecialHandling bool
-	Volatile        bool
+	SpecialHandling bool //Sets the NULL handling of the scalar function to SPECIAL_HANDLING.
+	Volatile        bool //Sets the Function Stability of the scalar function to VOLATILE, indicating the function should be re-run for every row. This limits optimization that can be performed for the function.
+	Varargs         bool //Sets the parameters of the given scalar function to varargs. Does not require adding parameters with duckdb_scalar_function_add_parameter.
 }
 
 type ScalarFunction interface {
@@ -123,22 +124,27 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 	scalarFunction := C.duckdb_create_scalar_function()
 	C.duckdb_scalar_function_set_name(scalarFunction, functionName)
 
+	cnf := function.Config()
 	// Add input parameters.
-	for _, inputType := range function.Config().InputTypes {
+	for i, inputType := range cnf.InputTypes {
 		logicalType, err := driverConn.sqlToLogical(inputType)
 		if err != nil {
 			return unsupportedTypeError(inputType)
 		}
 
-		//C.duckdb_scalar_function_set_varargs(scalarFunction, logicalType)
-		C.duckdb_scalar_function_add_parameter(scalarFunction, logicalType)
+		if i == len(cnf.InputTypes)-1 && cnf.Varargs {
+			C.duckdb_scalar_function_set_varargs(scalarFunction, logicalType)
+		} else {
+			C.duckdb_scalar_function_add_parameter(scalarFunction, logicalType)
+		}
+
 		C.duckdb_destroy_logical_type(&logicalType)
 	}
 
 	// Add result parameter.
-	logicalType, err := driverConn.sqlToLogical(function.Config().ResultType)
+	logicalType, err := driverConn.sqlToLogical(cnf.ResultType)
 	if err != nil {
-		return unsupportedTypeError(function.Config().ResultType)
+		return unsupportedTypeError(cnf.ResultType)
 	}
 	C.duckdb_scalar_function_set_return_type(scalarFunction, logicalType)
 	C.duckdb_destroy_logical_type(&logicalType)
@@ -153,11 +159,11 @@ func RegisterScalarUDFConn(c driver.Conn, name string, function ScalarFunction) 
 		C.duckdb_delete_callback_t(C.scalar_udf_delete_callback),
 	)
 
-	if function.Config().Volatile {
+	if cnf.Volatile {
 		C.duckdb_scalar_function_set_volatile(scalarFunction)
 	}
 
-	if function.Config().SpecialHandling {
+	if cnf.SpecialHandling {
 		C.duckdb_scalar_function_set_special_handling(scalarFunction)
 	}
 
