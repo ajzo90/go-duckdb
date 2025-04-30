@@ -68,6 +68,10 @@ func (r *rows) Next(dst []driver.Value) error {
 		r.chunk.close()
 		data := C.duckdb_stream_fetch_chunk(r.res)
 		if data == nil {
+			if errTyp := C.duckdb_result_error_type(&r.res); errTyp != 0 {
+				cStr := C.duckdb_result_error(&r.res)
+				return fmt.Errorf("duckdb streaming error: %s", C.GoString(cStr))
+			}
 			return io.EOF
 		}
 		if err := r.chunk.initFromDuckDataChunk(data, false); err != nil {
