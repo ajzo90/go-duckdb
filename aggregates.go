@@ -105,8 +105,11 @@ func RegisterAggregateUDF[StateType any](c *sql.Conn, name string, f AggregateFu
 	})
 	return err
 }
-
 func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f AggregateFunction[StateType]) error {
+	return RegisterAggregateUDFConnDestroy(c, name, f, C.go_duckdb_aggregate_destroy)
+}
+
+func RegisterAggregateUDFConnDestroy[StateType any](c driver.Conn, name string, f AggregateFunction[StateType], destroy unsafe.Pointer) error {
 	duckConn, err := getConn(c)
 	if err != nil {
 		return err
@@ -150,12 +153,11 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 		C.duckdb_aggregate_finalize_t(C.go_duckdb_aggregate_finalize),
 	)
 
-	C.duckdb_aggregate_function_set_destructor(function, C.duckdb_aggregate_destroy_t(C.go_duckdb_aggregate_destroy))
-
 	var internal = &aggFuncInternal{
 		size: int(unsafe.Sizeof(*new(StateType))),
 		initFn: func(state C.duckdb_aggregate_state) {
-			f.Init((*StateType)(unsafe.Pointer(state)))
+			v := (*StateType)(unsafe.Pointer(state))
+			f.Init(v)
 		},
 		updateFn: func(input C.duckdb_data_chunk, states *C.duckdb_aggregate_state) {
 			var n = C.duckdb_data_chunk_get_size(input)
@@ -189,6 +191,8 @@ func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f Aggre
 			f.Destroy(s[:int(count)])
 		},
 	}
+
+	C.duckdb_aggregate_function_set_destructor(function, C.duckdb_aggregate_destroy_t(destroy))
 
 	C.duckdb_aggregate_function_set_extra_info(function, cMem.store(internal), C.duckdb_delete_callback_t(C.go_duckdb_aggregate_delete_callback))
 
