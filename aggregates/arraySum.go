@@ -58,8 +58,7 @@ func (m ArraySumAggregateFunc) Combine(source, target []*ArraySumAggregateState)
 
 func (m ArraySumAggregateFunc) Finalize(states []*ArraySumAggregateState, ctx *duckdb.ExecContext) {
 	x := duckdb.ArrayType[float32]{}
-	var sz = ctx.ChunkSize()
-	_ = x.LoadVecCtx(ctx, sz)
+	_ = x.LoadVecCtx(ctx, len(states))
 	for i := range states {
 		var state = states[i]
 		row := x.GetRow(i)[:len(state)]
