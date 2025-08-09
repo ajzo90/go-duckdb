@@ -485,6 +485,10 @@ func (v *Vec[T]) LoadCtx(ch *ExecContext, colIdx int, chunkSize int) error {
 	return v.load(vector, chunkSize)
 }
 
+func (v *Vec[T]) LoadVecCtx(ctx *ExecContext, size int) error {
+	return v.load(ctx.output, size)
+}
+
 func (v *Vec[T]) LoadCastCtx(ch *CastExecContext) error {
 	return v.load(ch.input, ch.Count())
 }
@@ -715,6 +719,8 @@ func (l ListEntry) Length() int {
 func (l ListEntry) Offset() int {
 	return int(l.offset)
 }
+
+type ValidTypes = validTypes
 
 type validTypes interface {
 	primitiveTypes | ListEntry |
