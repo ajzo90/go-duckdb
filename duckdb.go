@@ -24,6 +24,15 @@ func init() {
 	sql.Register("duckdb", Driver{})
 }
 
+func Malloc(n int) unsafe.Pointer {
+	x := C.duckdb_malloc(C.size_t(n))
+	return unsafe.Pointer(x)
+}
+
+func Free(p unsafe.Pointer) {
+	C.duckdb_free(p)
+}
+
 type Driver struct{}
 
 func (d Driver) Open(dsn string) (driver.Conn, error) {
