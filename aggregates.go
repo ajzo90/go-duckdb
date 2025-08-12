@@ -105,11 +105,11 @@ func RegisterAggregateUDF[StateType any](c *sql.Conn, name string, f AggregateFu
 	})
 	return err
 }
-func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, f AggregateFunction[StateType]) error {
-	return RegisterAggregateUDFConnDestroy(c, name, f, C.go_duckdb_aggregate_destroy)
+func RegisterAggregateUDFConn[StateType any](c driver.Conn, name string, funcs ...AggregateFunction[StateType]) error {
+	return RegisterAggregateUDFConnDestroy(c, name, C.go_duckdb_aggregate_destroy, funcs...)
 }
 
-func RegisterAggregateUDFConnDestroy[StateType any](c driver.Conn, name string, f AggregateFunction[StateType], destroy unsafe.Pointer) error {
+func RegisterAggregateUDFConnDestroy[StateType any](c driver.Conn, name string, destroy unsafe.Pointer, funcs ...AggregateFunction[StateType]) error {
 	duckConn, err := getConn(c)
 	if err != nil {
 		return err
@@ -118,92 +118,94 @@ func RegisterAggregateUDFConnDestroy[StateType any](c driver.Conn, name string, 
 	functionName := C.CString(name)
 	defer C.free(unsafe.Pointer(functionName))
 
-	function := C.duckdb_create_aggregate_function()
-	C.duckdb_aggregate_function_set_name(function, functionName)
-
-	var conf = f.Config()
-
-	// Add input parameters.
-	for _, inputType := range conf.InputTypes {
-		logicalType, err := duckConn.sqlToLogical(inputType)
-		if err != nil {
-			return unsupportedTypeError(inputType)
-		}
-		C.duckdb_aggregate_function_add_parameter(function, logicalType)
-		C.duckdb_destroy_logical_type(&logicalType)
-	}
-
-	// Add result parameter.
-	logicalType, err := duckConn.sqlToLogical(conf.ResultType)
-	if err != nil {
-		return unsupportedTypeError(conf.ResultType)
-	}
-	C.duckdb_aggregate_function_set_return_type(function, logicalType)
-	C.duckdb_destroy_logical_type(&logicalType)
-
-	if conf.SpecialHandling {
-		C.duckdb_aggregate_function_set_special_handling(function)
-	}
-
-	C.duckdb_aggregate_function_set_functions(function,
-		C.duckdb_aggregate_state_size(C.go_duckdb_aggregate_state_size),
-		C.duckdb_aggregate_init_t(C.go_duckdb_aggregate_init),
-		C.duckdb_aggregate_update_t(C.go_duckdb_aggregate_update),
-		C.duckdb_aggregate_combine_t(C.go_duckdb_aggregate_combine),
-		C.duckdb_aggregate_finalize_t(C.go_duckdb_aggregate_finalize),
-	)
-
-	var internal = &aggFuncInternal{
-		size: int(unsafe.Sizeof(*new(StateType))),
-		initFn: func(state C.duckdb_aggregate_state) {
-			v := (*StateType)(unsafe.Pointer(state))
-			f.Init(v)
-		},
-		updateFn: func(input C.duckdb_data_chunk, states *C.duckdb_aggregate_state) {
-			var n = C.duckdb_data_chunk_get_size(input)
-			var ch = ExecContext{input: input}
-
-			sl := (*[1 << 31]*StateType)(unsafe.Pointer(states))[:n:n]
-			f.Update(sl, &ch)
-			if ch.ch != nil {
-				ReleaseChunk(ch.ch)
-			}
-		},
-		combineFn: func(source *C.duckdb_aggregate_state, target *C.duckdb_aggregate_state, count C.idx_t) {
-			var n = int(count)
-			var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))[:n:n]
-			var t = (*[1 << 31]*StateType)(unsafe.Pointer(target))[:n:n]
-
-			f.Combine(s, t)
-		},
-		finalizeFn: func(source *C.duckdb_aggregate_state, result C.duckdb_vector, count C.idx_t, offset C.idx_t) {
-
-			var ctx = ExecContext{output: result}
-			var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))
-
-			f.Finalize(s[offset:][:count], &ctx)
-			if ctx.out != nil {
-				ReleaseVector(ctx.out)
-			}
-		},
-		destroyFn: func(source *C.duckdb_aggregate_state, count C.idx_t) {
-			var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))
-			f.Destroy(s[:int(count)])
-		},
-	}
-
-	C.duckdb_aggregate_function_set_destructor(function, C.duckdb_aggregate_destroy_t(destroy))
-
-	C.duckdb_aggregate_function_set_extra_info(function, cMem.store(internal), C.duckdb_delete_callback_t(C.go_duckdb_aggregate_delete_callback))
-
 	// Register the function. API without overloading
 	//status := C.duckdb_register_aggregate_function(duckConn.duckdbCon, function)
 	//C.duckdb_destroy_aggregate_function(&function)
 
 	// API (function set) for overloading
 	var function_set = C.duckdb_create_aggregate_function_set(functionName)
-	C.duckdb_add_aggregate_function_to_set(function_set, function)
-	C.duckdb_destroy_aggregate_function(&function)
+
+	for _, f := range funcs {
+		function := C.duckdb_create_aggregate_function()
+		C.duckdb_aggregate_function_set_name(function, functionName)
+		var conf = f.Config()
+
+		// Add input parameters.
+		for _, inputType := range conf.InputTypes {
+			logicalType, err := duckConn.sqlToLogical(inputType)
+			if err != nil {
+				return unsupportedTypeError(inputType)
+			}
+			C.duckdb_aggregate_function_add_parameter(function, logicalType)
+			C.duckdb_destroy_logical_type(&logicalType)
+		}
+
+		// Add result parameter.
+		logicalType, err := duckConn.sqlToLogical(conf.ResultType)
+		if err != nil {
+			return unsupportedTypeError(conf.ResultType)
+		}
+		C.duckdb_aggregate_function_set_return_type(function, logicalType)
+		C.duckdb_destroy_logical_type(&logicalType)
+
+		if conf.SpecialHandling {
+			C.duckdb_aggregate_function_set_special_handling(function)
+		}
+
+		C.duckdb_aggregate_function_set_functions(function,
+			C.duckdb_aggregate_state_size(C.go_duckdb_aggregate_state_size),
+			C.duckdb_aggregate_init_t(C.go_duckdb_aggregate_init),
+			C.duckdb_aggregate_update_t(C.go_duckdb_aggregate_update),
+			C.duckdb_aggregate_combine_t(C.go_duckdb_aggregate_combine),
+			C.duckdb_aggregate_finalize_t(C.go_duckdb_aggregate_finalize),
+		)
+
+		var internal = &aggFuncInternal{
+			size: int(unsafe.Sizeof(*new(StateType))),
+			initFn: func(state C.duckdb_aggregate_state) {
+				v := (*StateType)(unsafe.Pointer(state))
+				f.Init(v)
+			},
+			updateFn: func(input C.duckdb_data_chunk, states *C.duckdb_aggregate_state) {
+				var n = C.duckdb_data_chunk_get_size(input)
+				var ch = ExecContext{input: input}
+
+				sl := (*[1 << 31]*StateType)(unsafe.Pointer(states))[:n:n]
+				f.Update(sl, &ch)
+				if ch.ch != nil {
+					ReleaseChunk(ch.ch)
+				}
+			},
+			combineFn: func(source *C.duckdb_aggregate_state, target *C.duckdb_aggregate_state, count C.idx_t) {
+				var n = int(count)
+				var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))[:n:n]
+				var t = (*[1 << 31]*StateType)(unsafe.Pointer(target))[:n:n]
+
+				f.Combine(s, t)
+			},
+			finalizeFn: func(source *C.duckdb_aggregate_state, result C.duckdb_vector, count C.idx_t, offset C.idx_t) {
+
+				var ctx = ExecContext{output: result}
+				var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))
+
+				f.Finalize(s[offset:][:count], &ctx)
+				if ctx.out != nil {
+					ReleaseVector(ctx.out)
+				}
+			},
+			destroyFn: func(source *C.duckdb_aggregate_state, count C.idx_t) {
+				var s = (*[1 << 31]*StateType)(unsafe.Pointer(source))
+				f.Destroy(s[:int(count)])
+			},
+		}
+
+		C.duckdb_aggregate_function_set_destructor(function, C.duckdb_aggregate_destroy_t(destroy))
+
+		C.duckdb_aggregate_function_set_extra_info(function, cMem.store(internal), C.duckdb_delete_callback_t(C.go_duckdb_aggregate_delete_callback))
+
+		C.duckdb_add_aggregate_function_to_set(function_set, function)
+		C.duckdb_destroy_aggregate_function(&function)
+	}
 
 	status := C.duckdb_register_aggregate_function_set(duckConn.duckdbCon, function_set)
 	C.duckdb_destroy_aggregate_function_set(&function_set)
