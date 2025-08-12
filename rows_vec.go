@@ -284,6 +284,11 @@ func (l *ListType[T]) Load(ch *UDFDataChunk, colIdx int) error {
 	return l.load(vector, ch.NumValues())
 }
 
+func (a *ListType[T]) LoadCtx(ctx *ExecContext, colIdx int, chunkSize int) error {
+	vector := C.duckdb_data_chunk_get_vector(ctx.input, C.idx_t(colIdx))
+	return a.load(vector, chunkSize)
+}
+
 func (l *ListType[T]) LoadVec(v *Vector, size int) error {
 	return l.load(v.vector, size)
 }
