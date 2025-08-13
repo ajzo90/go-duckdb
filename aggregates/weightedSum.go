@@ -25,7 +25,7 @@ func (m WeightedSumAggregate) Init(state *WeightedSumState) {
 func (m WeightedSumAggregate) Destroy(aggs []*WeightedSumState) {
 }
 
-func (m WeightedSumAggregate) Update(aggs []*WeightedSumState, ch *duckdb.ExecContext) {
+func (m WeightedSumAggregate) Update(aggs []*WeightedSumState, ch *duckdb.ExecContext) error {
 	sz := ch.ChunkSize()
 	x := duckdb.Vec[int64]{}
 	_ = x.LoadCtx(ch, 0, sz)
@@ -39,6 +39,7 @@ func (m WeightedSumAggregate) Update(aggs []*WeightedSumState, ch *duckdb.ExecCo
 	for i := range aggs {
 		aggs[i].Sum += inputData[i] * weightData[i]
 	}
+	return nil
 }
 
 func (m WeightedSumAggregate) Combine(s, t []*WeightedSumState) {

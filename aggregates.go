@@ -33,7 +33,7 @@ type AggregateFunctionConfig struct {
 type AggregateFunction[StateType any] interface {
 	Config() AggregateFunctionConfig
 	Init(*StateType)
-	Update([]*StateType, *ExecContext)
+	Update([]*StateType, *ExecContext) error
 	Combine(source, target []*StateType)
 	Finalize([]*StateType, *ExecContext)
 	Destroy([]*StateType)
@@ -41,7 +41,7 @@ type AggregateFunction[StateType any] interface {
 
 type aggFuncInternal struct {
 	initFn     func(state C.duckdb_aggregate_state)
-	updateFn   func(input C.duckdb_data_chunk, states *C.duckdb_aggregate_state)
+	updateFn   func(input C.duckdb_data_chunk, states *C.duckdb_aggregate_state) error
 	combineFn  func(source *C.duckdb_aggregate_state, target *C.duckdb_aggregate_state, count C.idx_t)
 	finalizeFn func(source *C.duckdb_aggregate_state, result C.duckdb_vector, count C.idx_t, offset C.idx_t)
 	destroyFn  func(source *C.duckdb_aggregate_state, count C.idx_t)
@@ -82,7 +82,9 @@ func go_duckdb_aggregate_delete_callback(data unsafe.Pointer) {
 
 //export go_duckdb_aggregate_update
 func go_duckdb_aggregate_update(info C.duckdb_function_info, input C.duckdb_data_chunk, states *C.duckdb_aggregate_state) {
-	internal(info).updateFn(input, states)
+	if err := internal(info).updateFn(input, states); err != nil {
+		go_duckdb_aggregate_set_error(info, err)
+	}
 }
 
 //export go_duckdb_aggregate_combine
@@ -166,15 +168,17 @@ func RegisterAggregateUDFConnDestroy[StateType any](c driver.Conn, name string, 
 				v := (*StateType)(unsafe.Pointer(state))
 				f.Init(v)
 			},
-			updateFn: func(input C.duckdb_data_chunk, states *C.duckdb_aggregate_state) {
+			updateFn: func(input C.duckdb_data_chunk, states *C.duckdb_aggregate_state) error {
 				var n = C.duckdb_data_chunk_get_size(input)
 				var ch = ExecContext{input: input}
 
 				sl := (*[1 << 31]*StateType)(unsafe.Pointer(states))[:n:n]
-				f.Update(sl, &ch)
+				err := f.Update(sl, &ch)
 				if ch.ch != nil {
 					ReleaseChunk(ch.ch)
 				}
+				return err
+
 			},
 			combineFn: func(source *C.duckdb_aggregate_state, target *C.duckdb_aggregate_state, count C.idx_t) {
 				var n = int(count)
