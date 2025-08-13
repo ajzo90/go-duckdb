@@ -201,6 +201,9 @@ func (d *Vector) init(v C.duckdb_vector, writable bool) {
 	case C.DUCKDB_TYPE_LIST:
 		v := AcquireVectorWr(C.duckdb_list_vector_get_child(d.vector), writable)
 		d.childVecs = append(d.childVecs[:0], v)
+	case C.DUCKDB_TYPE_ARRAY:
+		v := AcquireVectorWr(C.duckdb_array_vector_get_child(d.vector), writable)
+		d.childVecs = append(d.childVecs[:0], v)
 	default:
 
 	}
