@@ -313,6 +313,10 @@ func (l *ListType[T]) Rows() int {
 	return len(l.list)
 }
 
+func (l *ListType[T]) Data() []T {
+	return l.elements
+}
+
 func (l *ListType[T]) GetRow(row int) []T {
 	entry := l.list[row]
 	return l.elements[entry.offset : entry.offset+entry.length]
