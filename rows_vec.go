@@ -494,6 +494,12 @@ func (v *Vec[T]) LoadCtx(ch *ExecContext, colIdx int, chunkSize int) error {
 	return v.load(vector, chunkSize)
 }
 
+func LoadCtx[T validTypes](ch *ExecContext, colIdx int, chunkSize int) ([]T, error) {
+	var val Vec[T]
+	var err = val.LoadCtx(ch, colIdx, chunkSize)
+	return val.Data, err
+}
+
 func (v *Vec[T]) LoadVecCtx(ctx *ExecContext, size int) error {
 	return v.load(ctx.output, size)
 }
