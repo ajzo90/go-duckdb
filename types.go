@@ -59,8 +59,8 @@ var duckdbTypeMap = map[C.duckdb_type]string{
 	C.DUCKDB_TYPE_TIME_TZ:      "TIMETZ",
 	C.DUCKDB_TYPE_TIMESTAMP_TZ: "TIMESTAMPTZ",
 	C.DUCKDB_TYPE_ANY:          "ANY",
-	C.DUCKDB_TYPE_VARINT:       "VARINT",
-	C.DUCKDB_TYPE_SQLNULL:      "SQLNULL",
+	//C.DUCKDB_TYPE_VARINT:       "VARINT", // compile error types.go:62:2: could not determine what C.DUCKDB_TYPE_VARINT refers to
+	C.DUCKDB_TYPE_SQLNULL: "SQLNULL",
 }
 
 type numericType interface {
