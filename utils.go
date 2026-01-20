@@ -7,8 +7,10 @@ package duckdb
 */
 import "C"
 import (
+	"bytes"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -18,6 +20,15 @@ func StringifyValue(b []byte, v string) []byte {
 	b = append(b, '\'')
 	return b
 }
+
+func StringifyValueBytes(b []byte, v []byte) []byte {
+	b = slices.Grow(b,len(v) + 2 + bytes.Count(b, []byte("'")))
+	b = append(b, '\'')
+	b = append(b, bytes.ReplaceAll(v, []byte("'"), []byte("''"))...)
+	b = append(b, '\'')
+	return b
+}
+
 func StringifyList(values []string) string {
 	var b = make([]byte, 0, 4096)
 	b = append(b, "["...)
