@@ -21,10 +21,11 @@ import "C"
 import (
 	"database/sql"
 	"database/sql/driver"
-	"github.com/google/uuid"
 	"reflect"
 	"time"
 	"unsafe"
+
+	"github.com/google/uuid"
 )
 
 func ColDef(name string, typ string) ColumnDef {
@@ -96,6 +97,7 @@ func registerTableUDFConn(duckConn C.duckdb_connection, _name string, function T
 	defer C.free(unsafe.Pointer(name))
 
 	tableFunction := C.duckdb_create_table_function()
+	defer C.duckdb_destroy_table_function(&tableFunction)
 	C.duckdb_table_function_set_name(tableFunction, name)
 	C.duckdb_table_function_set_bind(tableFunction, C.bind(C.udf_bind))
 	C.duckdb_table_function_set_init(tableFunction, C.init(C.udf_init))
