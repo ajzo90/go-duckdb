@@ -188,6 +188,22 @@ func (s *stmt) ExecContext(ctx context.Context, nargs []driver.NamedValue) (driv
 	}
 	defer C.duckdb_destroy_result(res)
 
+	// DuckDB 2.0 runs a streaming result lazily: drain it so errors raised
+	// during execution (e.g. error() in a SELECT) are reported.
+	if C.duckdb_result_is_streaming(*res) {
+		for {
+			chunk := C.duckdb_fetch_chunk(*res)
+			if chunk == nil {
+				break
+			}
+			C.duckdb_destroy_data_chunk(&chunk)
+		}
+		if msg := C.duckdb_result_error(res); msg != nil {
+			return nil, getDuckDBError(C.GoString(msg))
+		}
+		return &result{0}, nil
+	}
+
 	ra := int64(C.duckdb_value_int64(res, 0, 0))
 	return &result{ra}, nil
 }
