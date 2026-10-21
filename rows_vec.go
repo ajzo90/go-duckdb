@@ -243,7 +243,7 @@ func (a *ArrayType[T]) load(vector C.duckdb_vector, numValues int) error {
 		a.ArrLen = int(C.duckdb_array_type_array_size(logical))
 		C.duckdb_destroy_logical_type(&logical)
 	}
-	childVector := C.duckdb_list_vector_get_child(vector)
+	childVector := C.duckdb_array_vector_get_child(vector)
 	__vec(&a.x, numValues*a.ArrLen, childVector, false)
 	return nil
 }
