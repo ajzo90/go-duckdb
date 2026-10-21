@@ -126,7 +126,7 @@ func (r *Rows) NextChunk(c *Chunk) error {
 	// load logical types
 	//_ = r.prepLogicalTypes(len(r.chunk.columns))
 
-	c.chunk = C.duckdb_stream_fetch_chunk(r.res)
+	c.chunk = C.duckdb_fetch_chunk(r.res)
 	if c.chunk == nil {
 		var err = io.EOF
 		switch x := C.duckdb_result_error_type(&r.res); x {

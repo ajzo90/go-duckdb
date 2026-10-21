@@ -44,9 +44,6 @@ func newRowsWithStmt(res C.duckdb_result, stmt *stmt) *rows {
 		chunkIdx:   0,
 		rowCount:   0,
 	}
-	if !C.duckdb_result_is_streaming(res) {
-		panic("duckdb: result is not streaming")
-	}
 
 	return &r
 }
@@ -66,7 +63,9 @@ func (r *rows) Columns() []string {
 func (r *rows) Next(dst []driver.Value) error {
 	for r.rowCount == r.chunk.size {
 		r.chunk.close()
-		data := C.duckdb_stream_fetch_chunk(r.res)
+		// duckdb_fetch_chunk reads streaming and materialized results; DuckDB 2.0
+		// materializes some queries (e.g. a dynamic PIVOT) even when streaming is requested.
+		data := C.duckdb_fetch_chunk(r.res)
 		if data == nil {
 			if errTyp := C.duckdb_result_error_type(&r.res); errTyp != 0 {
 				cStr := C.duckdb_result_error(&r.res)
