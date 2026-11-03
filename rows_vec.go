@@ -280,6 +280,7 @@ func (l *ListType[T]) load(vector C.duckdb_vector, numValues int) error {
 	var err error
 	l.elements, err = getVector[T](DuckdbType[T](), childSz, childVector)
 	l.list = castVec[duckdb_list_entry_t](vector)[:numValues]
+	l.validity = validity(vector, numValues)
 	return err
 }
 func (l *ListType[T]) Load(ch *UDFDataChunk, colIdx int) error {
@@ -305,6 +306,13 @@ type ListType[T validTypes] struct {
 	//child    VectorI
 	list     []duckdb_list_entry_t
 	elements []T
+	validity []uint64
+}
+
+// Validity is the list vector's NULL mask (nil when every row is valid). List
+// entries of NULL rows are undefined, so check it before GetRow.
+func (l *ListType[T]) Validity() []uint64 {
+	return l.validity
 }
 
 func (l *ListType[T]) serialize(dst []byte, format string) []byte {
