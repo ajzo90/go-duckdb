@@ -133,6 +133,9 @@ func (r *Rows) NextChunk(c *Chunk) error {
 		case C.DUCKDB_ERROR_INVALID:
 		default:
 			err = fmt.Errorf("error %d %s", int(x), string(C.GoString(C.duckdb_result_error(&r.res))))
+			if r.ctx != nil && r.ctx.Err() != nil {
+				err = r.ctx.Err() // interrupted at the deadline
+			}
 		}
 		r.err = err
 		c.Close()

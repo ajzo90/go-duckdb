@@ -16,7 +16,13 @@ func (c *conn) ExtendedQueryContext(ctx context.Context, q string, args []driver
 	if err != nil {
 		return nil, err
 	}
-	return &Rows{rows: r.(*rows)}, nil
+	// QueryContext only interrupts DuckDB until the first chunk; keep honouring
+	// ctx while the rows are fetched.
+	var rs = &Rows{rows: r.(*rows), ctx: ctx}
+	if ctx.Done() != nil {
+		rs.stopInterrupt = interruptOnDone(ctx, c.duckdbCon)
+	}
+	return rs, nil
 }
 
 type Conn struct {
@@ -28,9 +34,20 @@ func UpgradeConn(connection Connection) *Conn {
 }
 
 type Rows struct {
-	mtx sync.Mutex
-	err error
+	mtx           sync.Mutex
+	err           error
+	ctx           context.Context
+	stopInterrupt func()
 	*rows
+}
+
+// Close stops the interrupt watcher before releasing the result, so the
+// connection is safe to reuse once Close returns.
+func (r *Rows) Close() error {
+	if r.stopInterrupt != nil {
+		r.stopInterrupt()
+	}
+	return r.rows.Close()
 }
 
 func (c *Conn) Exec(q string, args ...driver.NamedValue) (driver.Result, error) {
